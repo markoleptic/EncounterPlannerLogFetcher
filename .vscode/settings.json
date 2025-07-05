@@ -1,0 +1,15 @@
+{
+	"cSpell.words": ["dotenv", "venv"],
+	"cSpell.ignorePaths": [
+		"events",
+		"fights",
+		"reports",
+		".git",
+		".gitignore",
+		".vscode",
+		"token.json",
+		"requirements.txt"
+	],
+	"python.analysis.typeCheckingMode": "basic",
+	"black-formatter.args": ["--line-length", "120"]
+}
