@@ -1,5 +1,5 @@
 {
-	"cSpell.words": ["dotenv", "venv"],
+	"cSpell.words": ["begincast", "dotenv", "venv"],
 	"cSpell.ignorePaths": [
 		"events",
 		"fights",
@@ -10,6 +10,17 @@
 		"token.json",
 		"requirements.txt"
 	],
+	"search.useIgnoreFiles": false,
+	"search.exclude": {
+		"**/.venv/*": true,
+		"**/.vscode/*": true,
+		"**/events/*": false,
+		"**/reports/*": false,
+		"**/fights/*": false,
+		"**/.git/*": true,
+		"**/.gitignore/*": true,
+		"**/__pycache__/*": true
+	},
 	"python.analysis.typeCheckingMode": "basic",
 	"black-formatter.args": ["--line-length", "120"]
 }

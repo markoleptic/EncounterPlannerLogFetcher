@@ -11,30 +11,30 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def get_project_root() -> Path:
+def getProjectRoot() -> Path:
     return PROJECT_ROOT
 
 
-def get_events_path() -> Path:
+def getEventsPath() -> Path:
     return PROJECT_ROOT / "events"
 
 
-def get_reports_path() -> Path:
+def getReportsPath() -> Path:
     return PROJECT_ROOT / "reports"
 
 
-def get_fights_path() -> Path:
+def getFightsPath() -> Path:
     return PROJECT_ROOT / "fights"
 
 
-def get_access_token() -> str:
-    token_path = get_project_root() / "token.json"
+def getAccessToken() -> str:
+    tokenPath = getProjectRoot() / "token.json"
     token = None
-    if os.path.exists(token_path):
-        with open(token_path) as token_file:
-            json_token = json.load(token_file)
-            if json_token["expires_at"] > time.time():
-                token = json_token["access_token"]
+    if os.path.exists(tokenPath):
+        with open(tokenPath) as tokenFile:
+            jsonToken = json.load(tokenFile)
+            if jsonToken["expires_at"] > time.time():
+                token = jsonToken["access_token"]
 
     if token == None:
         url = "https://www.warcraftlogs.com/oauth/token"
@@ -46,13 +46,13 @@ def get_access_token() -> str:
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         response = requests.post(url, data=payload, headers=headers)
         response.raise_for_status()
-        json_response = response.json()
-        token = json_response["access_token"]
-        json_token = {
+        jsonResponse = response.json()
+        token = jsonResponse["access_token"]
+        jsonToken = {
             "access_token": token,
-            "expires_at": int(time.time()) + json_response["expires_in"] - 60,
+            "expires_at": int(time.time()) + jsonResponse["expires_in"] - 60,
         }
-        with open(token_path, "w") as f:
-            json.dump(json_token, f)
+        with open(tokenPath, "w") as tokenFile:
+            json.dump(jsonToken, tokenFile)
 
     return token
