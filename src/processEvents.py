@@ -1,13 +1,14 @@
 import json
-from statistics import mean, stdev
-
-from src.enums import DifficultyType
-from src.utility import getEventsPath, getFightsPath
+import numpy as np
+import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass, asdict
 from statistics import mean, stdev
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+from src.enums import DifficultyType
+from src.utility import getEventsFilePath, getFightsFilePath
 
 
 @dataclass
@@ -27,187 +28,206 @@ class Fight:
 
 @dataclass
 class Event:
-    timestamp: int
+    abilityID: int
     type: str
+    fightID: int
+    fightCode: str
+    timestamp: int
     sourceID: int
     targetID: int
-    abilityID: int
-    fightID: int
-
-    totalTime: float = 0.0
-    phaseTime: float = 0.0
     phase: int = 0
+    phaseTime: float = 0.0
+    totalTime: float = 0.0
 
 
-def findFight(fights: List[Dict[str, Any]], code: str) -> Optional[Dict[str, Any]]:
-    for fight in fights:
-        if fight["code"] == code:
-            return fight
-    return None
+def createEncounterDataFrame(zoneID: int, encounterID: int, difficulty: DifficultyType) -> pd.DataFrame:
+    """Creates a Pandas DataFrame for the given encounter using all events events matching the specified criteria.
 
+    Args:
+        zoneID (int): ZoneID used when fetching data.
+        encounterID (int): Encounter ID of the boss encounter.
+        difficulty (DifficultyType): Difficulty used when fetching data.
 
-def getAbilityCasts(events: List[Event]) -> Dict[int, List[Event]]:
-    castsByAbility: Dict[int, List[Event]] = defaultdict(list)
-    for event in events:
-        castsByAbility[event.abilityID].append(event)
+    Returns:
+        pd.DataFrame: Empty if the fights file doesn't exist or if no fights were found.
+    """
+    fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
 
-    # Filter: prefer begincast over cast when both exist
-    filteredCasts: Dict[int, List[Event]] = defaultdict(list)
-    for abilityID, eventList in castsByAbility.items():
-        for event in eventList:
-            if event.type == "begincast":
-                filteredCasts[abilityID].append(event)
-    for abilityID, eventList in castsByAbility.items():
-        for event in eventList:
-            if event.type == "cast":
-                if not filteredCasts[abilityID]:
-                    filteredCasts[abilityID].append(event)
-    return filteredCasts
+    if not fightsFilePath.exists():
+        print(f"{zoneID}_{encounterID}_{difficulty}.json does not exist")
+        return pd.DataFrame()
 
-
-def processEvents(zoneID: int, encounterID: int, difficulty: DifficultyType):
-    fightsPath = getFightsPath() / f"{zoneID}_{encounterID}_{difficulty}.json"
-    eventsDir = getEventsPath()
-
-    with open(fightsPath) as fightsFile:
+    with open(fightsFilePath) as fightsFile:
         fights = json.load(fightsFile)
 
     if not fights:
-        print("No fights found.")
-        return
+        print("No fights found")
+        return pd.DataFrame()
 
-    allFightEvents: List[List[Event]] = []
+    allFightEvents: List[Event] = []
 
     for fightData in fights:
-        if not fightData["phaseTransitions"]:
+        startTime = fightData.get("startTime")
+        if startTime == None:
             continue
-        phaseTransitions = [
-            PhaseTransition(id=phaseTransition["id"], startTime=phaseTransition["startTime"])
-            for phaseTransition in sorted(
-                fightData.get("phaseTransitions", []), key=lambda phaseTransition: phaseTransition["startTime"]
-            )
-        ]
+
+        rawPhaseTransitions = fightData.get("phaseTransitions") or []
+        # if no real transitions, assume one phase starting at the very beginning
+        if not rawPhaseTransitions:
+            rawPhaseTransitions = [{"id": 0, "startTime": fightData["startTime"]}]
+
+        phaseTransitions: List[PhaseTransition] = []
+        for normalizedPhaseNumber, phase in enumerate(
+            sorted(rawPhaseTransitions, key=lambda pt: pt["startTime"]), start=1
+        ):
+            phaseTransitions.append(PhaseTransition(id=normalizedPhaseNumber, startTime=phase["startTime"]))
 
         fightCode = fightData["code"]
         fightID = fightData["id"]
 
-        eventsPath = eventsDir / f"{zoneID}_{encounterID}_{difficulty}_{fightCode}_{fightID}.json"
-        with open(eventsPath) as eventsFile:
-            eventData = json.load(eventsFile)
-            fightStartTime = eventData["startTime"]
+        eventsFilePath = getEventsFilePath(zoneID, difficulty, encounterID, fightCode, fightID)
+        if eventsFilePath.exists():
+            with open(eventsFilePath) as eventsFile:
+                eventData = json.load(eventsFile)
+                fightStartTime = eventData["startTime"]
 
-            events: List[Event] = []
-            for event in eventData["events"]:
-                timestamp = event["timestamp"]
+                for event in eventData["events"]:
+                    timestamp = event["timestamp"]
 
-                # Determine phase
-                phaseID = 0
-                phaseStartTime = fightStartTime
-                for phaseTransition in phaseTransitions:
-                    if timestamp >= phaseTransition.startTime:
-                        phaseID = phaseTransition.id
-                        phaseStartTime = phaseTransition.startTime
-                    else:
-                        break
-
-                events.append(
-                    Event(
-                        timestamp=timestamp,
-                        type=event["type"],
-                        sourceID=event["sourceID"],
-                        targetID=event["targetID"],
-                        abilityID=event["abilityGameID"],
-                        fightID=fightID,
-                        totalTime=(timestamp - fightStartTime) / 1000.0,
-                        phaseTime=(timestamp - phaseStartTime) / 1000.0,
-                        phase=phaseID,
+                    # Determine phase
+                    phaseID = 0
+                    phaseStartTime = fightStartTime
+                    for phaseTransition in phaseTransitions:
+                        if timestamp >= phaseTransition.startTime:
+                            phaseID = phaseTransition.id
+                            phaseStartTime = phaseTransition.startTime
+                        else:
+                            break
+                    allFightEvents.append(
+                        Event(
+                            timestamp=timestamp,
+                            type=event["type"],
+                            sourceID=event["sourceID"],
+                            targetID=event["targetID"],
+                            abilityID=event["abilityGameID"],
+                            fightID=fightID,
+                            fightCode=fightCode,
+                            totalTime=(timestamp - fightStartTime) / 1000.0,
+                            phaseTime=(timestamp - phaseStartTime) / 1000.0,
+                            phase=phaseID,
+                        )
                     )
-                )
 
-            allFightEvents.append(events)
+    df = pd.DataFrame(allFightEvents)
 
-    # Save processed events for debugging
-    outputPath = eventsDir / f"{zoneID}_{encounterID}_{difficulty}_total.json"
-    with open(outputPath, "w") as outFile:
-        json.dump(
-            [[asdict(event) for event in events] for events in allFightEvents],
-            outFile,
-            indent=2,
-        )
+    if df.empty:
+        print("Empty dataframe")
+        return df
 
-    # Analyze timings
-    analyzeCastTimings(allFightEvents)
+    df.drop(df[df["abilityID"] == 145629].index, inplace=True)  # AMZ...
+
+    # Sort by fight, ability, then timestamp
+    df = df.sort_values(["fightCode", "fightID", "abilityID", "timestamp"])
+
+    # Within each fightCode+fightID+abilityID, shift the 'type' column so we can compare each row to its predecessor
+    df["prev_type"] = df.groupby(["fightCode", "fightID", "abilityID"])["type"].shift(1)
+
+    # Drop any 'cast' whose previous event was a 'begincast'
+    mask = (df["type"] == "cast") & (df["prev_type"] == "begincast")
+    cleaned = df[~mask].copy()
+
+    # Recompute castIndex
+    cleaned["castIndex"] = (
+        cleaned.sort_values(["fightCode", "fightID", "abilityID", "phase", "phaseTime"])
+        .groupby(["fightCode", "fightID", "abilityID", "phase"])
+        .cumcount()
+        + 1
+    )
+
+    # Drop the helper column
+    cleaned = cleaned.drop(columns="prev_type")
+
+    return cleaned
 
 
-def analyzeCastTimings(allFightEvents: List[List[Event]]):
-    abilityTimings: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+def aggregatePhaseTimeStatistics(dataFrame: pd.DataFrame) -> pd.DataFrame:
+    """Computes the count, mean, standard deviation, minimum, and maximum phaseTime values for a DataFrame describing
+    an encounter.
 
-    for fightIndex, events in enumerate(allFightEvents):
-        abilityCasts = getAbilityCasts(events)
+    Args:
+        dataFrame (pd.DataFrame): DataFrame returned by `createEncounterDataFrame`.
 
-        for abilityID, abilityInstancesByCastIndex in abilityCasts.items():
-            # Group by phase
-            phaseGroups: Dict[int, List[Event]] = defaultdict(list)
-            for cast in abilityInstancesByCastIndex:
-                phaseGroups[cast.phase].append(cast)
+    Returns:
+        pd.DataFrame: A new DataFrame grouped by `abilityID`, `phase`, `castIndex`, aggregated across `phaseTime`.
+    """
+    phaseTimeStatistics = (
+        dataFrame.groupby(["abilityID", "phase", "castIndex"])["phaseTime"]
+        .agg(count="count", mean="mean", std="std", min="min", max="max")
+        .fillna(0)
+        .reset_index()
+    )
+    return phaseTimeStatistics
 
-            for phase, phaseCasts in phaseGroups.items():
-                phaseCasts.sort(key=lambda phaseCast: phaseCast.phaseTime)
-                for castIndex, cast in enumerate(phaseCasts, start=1):
-                    abilityTimings[abilityID].append(
-                        {
-                            "castIndex": castIndex,
-                            "phaseTime": cast.phaseTime,
-                            "phase": phase,
-                        }
-                    )
+
+def printPhaseTimeStatistics(
+    dataFrame: pd.DataFrame,
+    printAbilityUsage: bool = True,
+    printDetailedCasts: bool = True,
+    printAverageCastTimes: bool = True,
+) -> None:
+    """Prints various statistics using the passed DataFrame.
+
+    Args:
+        dataFrame (pd.DataFrame): DataFrame returned by `createEncounterDataFrame`.
+        printAbilityUsage (bool, optional): Prints the total cast count of all abilities across all observed
+        encounters. Defaults to True.
+        printDetailedCasts (bool, optional): Prints aggregated phase time statistics. Defaults to True.
+        printAverageCastTimes (bool, optional): Prints average cast times for abilities. Defaults to True.
+    """
+    phaseTimeStatistics = aggregatePhaseTimeStatistics(dataFrame)
 
     print("\n=== Ability Usage ===")
-    for abilityID, timings in abilityTimings.items():
-        print(f"Ability {abilityID}: used {len(timings)} times")
+    usage = phaseTimeStatistics.groupby("abilityID").size().sort_index()
+    for abilityID, count in usage.items():
+        print(f"Ability {abilityID}: used {count} times")
 
-    castTimeBuckets: Dict[int, Dict[int, Dict[int, List[float]]]] = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(list))
-    )
-    # {abilityID: {phase: {castIndex: [phaseTimes]}}}
-
-    for abilityID, abilityInstances in abilityTimings.items():
-        for abilityInstance in abilityInstances:
-            castTimeBuckets[abilityID][abilityInstance["phase"]][abilityInstance["castIndex"]].append(
-                abilityInstance["phaseTime"]
-            )
-
+    # --- 2) Detailed Cast Stats + estimated interval ---
     print("\n=== Detailed Cast Stats ===")
-    for abilityID, abilityInstancesByPhase in castTimeBuckets.items():
+    uniqueAbilityIDs: List[int] = sorted(phaseTimeStatistics["abilityID"].unique())
+    for abilityID in uniqueAbilityIDs:
         print(f"\nAbility {abilityID}:")
-        for phase, abilityInstancesByCastIndex in sorted(abilityInstancesByPhase.items()):
+        abilityStatistics: pd.DataFrame = phaseTimeStatistics[phaseTimeStatistics["abilityID"] == abilityID]
+        uniquePhases: List[int] = sorted(abilityStatistics["phase"].unique())
+        for phase in uniquePhases:
             print(f"  Phase {phase}:")
-            for castIndex, phaseTimes in sorted(abilityInstancesByCastIndex.items()):
-                averagePhaseTime = mean(phaseTimes)
-                count = len(phaseTimes)
-                standardDeviation = stdev(phaseTimes) if count > 1 else 0.0
-                print(
-                    f"    Cast #{castIndex}: count={count}, avg={averagePhaseTime:.2f}, "
-                    f"std_dev={standardDeviation:.2f}, min={min(phaseTimes):.2f}, max={max(phaseTimes):.2f}"
-                )
-            castIndices = sorted(abilityInstancesByCastIndex.keys())
-            if len(castIndices) < 2:
-                continue  # Need at least 2 casts to get an interval
-
-            # Collect average times in order
-            averageCastTimes = []
-            for castIndex in castIndices:
-                phaseTimes = abilityInstancesByCastIndex[castIndex]
-                averagePhaseTime = mean(phaseTimes)
-                averageCastTimes.append(averagePhaseTime)
-
-            # Compute intervals between consecutive casts
-            intervals = [averageCastTimes[i + 1] - averageCastTimes[i] for i in range(len(averageCastTimes) - 1)]
-
-            averageInterval = mean(intervals)
-            standardDeviationInterval = stdev(intervals) if len(intervals) > 1 else 0.0
-
-            print(
-                f"  Phase {phase}: estimated cast interval ≈ {averageInterval:.2f}s "
-                + f"(std dev: {standardDeviationInterval:.2f}s)"
+            phaseStatistics: pd.DataFrame = abilityStatistics[abilityStatistics["phase"] == phase].sort_values(
+                "castIndex"
             )
+            for _, row in phaseStatistics.iterrows():
+                print(
+                    f"    Cast #{int(row['castIndex'])}: "
+                    f"count={int(row['count'])}, "
+                    f"avg={row['mean']:.2f}, "
+                    f"std_dev={row['std']:.2f}, "
+                    f"min={row['min']:.2f}, "
+                    f"max={row['max']:.2f}"
+                )
+            # Compute interval if there’s more than one cast
+            castMeans: np.ndarray = phaseStatistics["mean"].to_numpy()
+            if len(castMeans) > 1:
+                intervals = castMeans[1:] - castMeans[:-1]
+                averageInterval = intervals.mean()
+                stdInterval = intervals.std()
+                print(
+                    f"  Phase {phase}: estimated cast interval ≈ {averageInterval:.2f}s (std dev: {stdInterval:.2f}s)"
+                )
+
+    print("\n=== Average Cast Times Lists ===")
+    for (abilityID, phase), grp in phaseTimeStatistics.groupby(["abilityID", "phase"]):
+        meanCastTimes = grp.sort_values("castIndex")["mean"].to_numpy()
+        relativeTimes = np.insert(np.diff(meanCastTimes), 0, meanCastTimes[0])
+        relativeTimes = np.round(relativeTimes, 2)
+        print(
+            f"{abilityID}:{phase}: {np.array2string(meanCastTimes, precision=2, separator=', ', floatmode='fixed', 
+                                                    max_line_width=9999)}"
+        )

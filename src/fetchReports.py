@@ -1,13 +1,16 @@
 import json
+from pathlib import Path
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 from src.enums import DifficultyType, KillType
-from typing import Any, Dict
+from typing import Any, Dict, List, Set
 
-from src.utility import getAccessToken, getEventsPath, getFightsPath, getReportsPath
+from src.utility import getAccessToken, getEventsFilePath, getFightsFilePath, getReportsFilePath
 
 
-def fetchReports(accessToken: str, page: int, zoneID: int, reportLimit: int = 0) -> Dict[str, Any]:
+def fetchReports(
+    accessToken: str, page: int, zoneID: int, reportLimit: int = 0, startTime: float = 0.0
+) -> Dict[str, Any]:
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
@@ -15,46 +18,67 @@ def fetchReports(accessToken: str, page: int, zoneID: int, reportLimit: int = 0)
     client = Client(transport=transport, fetch_schema_from_transport=True)
     query = """
     query (
-        $page: Int!,
+        $page: Int!
         $zoneID: Int!
         $reportLimit: Int
+        $startTime: Float
     ) {
         reportData {
-            reports(page: $page, zoneID: $zoneID, limit: $reportLimit) {
+            reports(page: $page, zoneID: $zoneID, limit: $reportLimit, startTime: $startTime) {
                 current_page
                 data {
                     code
+                    startTime
+				    endTime
                 }
                 has_more_pages
             }
         }
     }"""
 
-    variables = {
-        "page": page,
-        "zoneID": zoneID,
-        "reportLimit": reportLimit,
-    }
+    variables = {"page": page, "zoneID": zoneID, "reportLimit": reportLimit, "startTime": startTime}
 
     return client.execute(gql(query), variables)
 
 
-def fetchAndSaveReports(zoneID: int, reportLimit: int = 100, maxPages: int = 10):
+def fetchAndSaveReports(
+    zoneID: int,
+    reportLimit: int = 100,
+    maxPages: int = 10,
+    startTime: float = -1.0,
+    reportsFilePath: Path | None = None,
+):
     token = getAccessToken()
     page = 1
     reportCodes = []
 
+    if reportsFilePath == None:
+        reportsFilePath = getReportsFilePath(zoneID)
+    if reportsFilePath.exists():
+        with open(reportsFilePath) as reportsFile:
+            lastData = json.load(reportsFile)
+            reportCodes = lastData["codes"]
+            print(f"Loaded: {len(reportCodes)} codes from {reportsFilePath}")
+            if startTime == -1.0:
+                startTime = lastData.get("startTime", 0.0)
+                print(f"Using last saved start time: {startTime}")
+
+    maxStartTime = startTime
+
     while page <= maxPages:
         try:
             print(f"Fetching page {page}...")
-            result = fetchReports(token, page, zoneID, reportLimit)
+            result = fetchReports(token, page, zoneID, reportLimit, startTime)
 
-            reportsData = result["reportData"]["reports"]["data"]
-            print(f"Found {len(reportsData)} reports on page {page}")
+            reportData = result["reportData"]
+            reports = reportData["reports"]["data"]
 
-            for report in reportsData:
+            print(f"Found {len(reports)} reports on page {page}")
+            for report in reports:
+                maxStartTime = max(maxStartTime, report["startTime"])
                 code = report["code"]
-                reportCodes.append(code)
+                if not code in reportCodes:
+                    reportCodes.append(report["code"])
 
             if not result["reportData"]["reports"]["has_more_pages"]:
                 print("No more pages.")
@@ -63,15 +87,39 @@ def fetchAndSaveReports(zoneID: int, reportLimit: int = 100, maxPages: int = 10)
             page += 1
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
-            break
 
-    path = getReportsPath() / f"{zoneID}.json"
-    with open(path, "w") as reportFile:
+    with open(reportsFilePath, "w") as reportsFile:
         json.dump(
-            {"zoneID": zoneID, "lastPage": page, "codes": reportCodes},
-            reportFile,
+            {"zoneID": zoneID, "lastPage": page, "codes": reportCodes, "startTime": maxStartTime},
+            reportsFile,
             indent=2,
         )
+
+
+def fetchFightFromReport(accessToken: str, code: str, fightID: int) -> Dict[str, Any]:
+    transport = RequestsHTTPTransport(
+        url="https://www.warcraftlogs.com/api/v2/client",
+        headers={"Authorization": f"Bearer {accessToken}"},
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=True)
+    query = """
+    query ($code: String, $fightIDs: [Int]) {
+        reportData {
+            report(code: $code) {
+                fights(fightIDs: $fightIDs) {
+                    id
+                    startTime
+                }
+            }
+        }
+    }"""
+
+    variables = {
+        "code": code,
+        "fightIDs": [fightID],
+    }
+
+    return client.execute(gql(query), variables)
 
 
 def fetchFightsFromReport(
@@ -125,75 +173,71 @@ def fetchAndSaveFights(
     encounterID: int,
     difficulty: DifficultyType,
     killType: KillType,
-    reportLimit: int,
-    maxPages: int,
+    overwriteExisting: bool = False,
+    foundFightLimit: int = 0,
+    reportsFilePath: Path | None = None,
 ):
-    token = getAccessToken()
-    results = []
+    if reportsFilePath == None:
+        reportsFilePath = getReportsFilePath(zoneID)
+    if not reportsFilePath.exists():
+        print(f"No reports file for zoneID: {zoneID}")
+        return
 
-    with open(getReportsPath() / f"{zoneID}.json") as reportsFile:
+    with open(reportsFilePath) as reportsFile:
         reports = json.load(reportsFile)
-        codes = reports["codes"]
-        for code in codes:
-            try:
-                print(f"Fetching fights for {code}...")
-                result = fetchFightsFromReport(token, code, encounterID, difficulty, killType)
+        codes: List[str] = reports["codes"]
 
-                fightsData = result["reportData"]["report"]["fights"]
-                print(f"Found {len(fightsData)} fights for {code}")
+    fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
+    results: List[Dict[str, Any]] = []
 
-                for fight in fightsData:
-                    fightID = fight["id"]
-                    startTime = fight["startTime"]
+    if not overwriteExisting and fightsFilePath.exists():
+        with open(fightsFilePath) as fightsFile:
+            results = json.load(fightsFile)
 
-                    if fightID and startTime:
-                        results.append(
-                            {
-                                "code": code,
-                                "id": fightID,
-                                "startTime": startTime,
-                                "fightPercentage": fight["fightPercentage"],
-                                "keystoneLevel": fight["keystoneLevel"] or None,
-                                "phaseTransitions": fight["phaseTransitions"] or None,
-                            }
-                        )
+    seenCodes: Set[str] = {r["code"] for r in results}
 
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-                continue
+    count = 0
+    token = getAccessToken()
+    for code in codes:
+        if code in seenCodes:
+            continue
 
-    with open(getFightsPath() / f"{zoneID}_{encounterID}_{difficulty}.json", "w") as fight_id_file:
-        json.dump(
-            results,
-            fight_id_file,
-            indent=2,
-        )
+        print(f"Fetching fights for code: {code}...")
+        try:
+            result = fetchFightsFromReport(token, code, encounterID, difficulty, killType)
+        except Exception as e:
+            print(f"Error fetching report {code!r}: {e}")
+            break
 
+        fightsData = result["reportData"]["report"]["fights"]
+        print(f"Found {len(fightsData)} fights")
 
-def fetchFightFromReport(accessToken: str, code: str, fightID: int) -> Dict[str, Any]:
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
-    query = """
-    query ($code: String, $fightIDs: [Int]) {
-        reportData {
-            report(code: $code) {
-                fights(fightIDs: $fightIDs) {
-                    id
-                    startTime
-                }
-            }
-        }
-    }"""
+        if len(fightsData) == 0:
+            results.append({"code": code})
+        else:
+            for fight in fightsData:
+                fightID = fight.get("id")
+                startTime = fight.get("startTime")
+                if fightID and startTime:
+                    results.append(
+                        {
+                            "code": code,
+                            "id": fightID,
+                            "startTime": startTime,
+                            "fightPercentage": fight["fightPercentage"],
+                            "keystoneLevel": fight["keystoneLevel"] or None,
+                            "phaseTransitions": fight["phaseTransitions"] or None,
+                        }
+                    )
+                    count += 1
+        seenCodes.add(code)
 
-    variables = {
-        "code": code,
-        "fightIDs": [fightID],
-    }
+        if foundFightLimit > 0 and count >= foundFightLimit:
+            print(f"Hit found fight limit of {foundFightLimit}, stopping")
+            break
 
-    return client.execute(gql(query), variables)
+    with open(fightsFilePath, "w") as fightsFile:
+        json.dump(results, fightsFile, indent=2)
 
 
 def fetchEvents(accessToken: str, code: str, fightIDs: list[int], startTime: float) -> Dict[str, Any]:
@@ -221,60 +265,53 @@ def fetchEvents(accessToken: str, code: str, fightIDs: list[int], startTime: flo
         }
     }"""
 
-    variables = {
-        "code": code,
-        "fightIDs": fightIDs,
-        "startTime": startTime,
-    }
+    variables = {"code": code, "fightIDs": fightIDs, "startTime": startTime}
 
     return client.execute(gql(query), variables)
 
 
-def fetchAndSaveEvents(zoneID: int, encounterID: int, difficulty: DifficultyType):
-    token = getAccessToken()
+def fetchAndSaveEvents(zoneID: int, encounterID: int, difficulty: DifficultyType, overwriteExisting: bool = False):
+    fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
+    if not fightsFilePath.exists():
+        print(f"No fights file for zoneID:{zoneID}, encounterID:{encounterID}, difficulty:{difficulty}")
+        return
 
-    with open(getFightsPath() / f"{zoneID}_{encounterID}_{difficulty}.json") as fightsFile:
+    fightObjects = {}
+    with open(fightsFilePath) as fightsFile:
         fightObjects = json.load(fightsFile)
 
-        for fightObject in fightObjects:
-            code = fightObject["code"]
-            fightID = fightObject["id"]
-            fightStartTime = fightObject["startTime"]
-            startTime = 0.0
-            eventsData = []
-            try:
-                print(f"Fetching events for {code}, {fightID}...")
+    token = getAccessToken()
 
-                while True:
+    for fightObject in fightObjects:
+        code = fightObject.get("code")
+        fightID = fightObject.get("id")
+        if not fightID:
+            continue
+
+        fightStartTime = fightObject["startTime"]
+        startTime = 0.0
+        eventsData = []
+
+        eventsFilePath = getEventsFilePath(zoneID, difficulty, encounterID, code, fightID)
+        if not eventsFilePath.exists() or overwriteExisting:
+            try:
+                print(f"Fetching events for code: {code}, fightID: {fightID}...")
+                while startTime != None:
                     result = fetchEvents(token, code, [fightID], startTime)
                     currentEventsData = result["reportData"]["report"]["events"]["data"]
                     count = len(currentEventsData)
-                    print(f"Found {count} events for {code}, {fightID}")
-
+                    print(f"Found {count} events")
                     if count > 0:
                         eventsData.extend(currentEventsData)
-
-                    nextPageTimestamp = result["reportData"]["report"]["events"]["nextPageTimestamp"]
-                    if nextPageTimestamp:
-                        startTime = nextPageTimestamp
-                    else:
-                        break
-
-                if len(eventsData) > 0:
-                    path = getEventsPath() / f"{zoneID}_{encounterID}_{difficulty}_{code}_{fightID}.json"
-                    with open(path, "w") as eventsFile:
-                        json.dump(
-                            {
-                                "startTime": fightStartTime,
-                                "events": eventsData,
-                            },
-                            eventsFile,
-                            indent=2,
-                        )
+                    startTime = result["reportData"]["report"]["events"]["nextPageTimestamp"]
 
             except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-                continue
+                print(f"Error fetching events for: {code}, fightID: {fightID}: {e}")
+                return
+
+        if len(eventsData) > 0:
+            with open(eventsFilePath, "w") as eventsFile:
+                json.dump({"startTime": fightStartTime, "events": eventsData}, eventsFile, indent=2)
 
 
 def fetchReportsComplex(

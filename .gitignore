@@ -6,3 +6,4 @@ fights/*
 reports/*
 token.json
 temp/*
+move_events.sh

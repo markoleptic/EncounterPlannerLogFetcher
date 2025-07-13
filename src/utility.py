@@ -5,6 +5,8 @@ import requests
 import time
 from pathlib import Path
 
+from src.enums import DifficultyType
+
 load_dotenv()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -15,16 +17,32 @@ def getProjectRoot() -> Path:
     return PROJECT_ROOT
 
 
-def getEventsPath() -> Path:
-    return PROJECT_ROOT / "events"
+def getEventsPath(zoneID: int, difficulty: DifficultyType, encounterID: int) -> Path:
+    return PROJECT_ROOT / "events" / str(zoneID) / str(difficulty) / str(encounterID)
+
+
+def getEventsFilePath(zoneID: int, difficulty: DifficultyType, encounterID: int, code: str, fightID: int) -> Path:
+    return getEventsPath(zoneID, difficulty, encounterID) / f"{zoneID}_{encounterID}_{difficulty}_{code}_{fightID}.json"
 
 
 def getReportsPath() -> Path:
     return PROJECT_ROOT / "reports"
 
 
+def getReportsFilePath(zoneID: int) -> Path:
+    return getReportsPath() / f"{zoneID}.json"
+
+
 def getFightsPath() -> Path:
     return PROJECT_ROOT / "fights"
+
+
+def getFightsFilePath(zoneID: int, difficulty: DifficultyType, encounterID: int) -> Path:
+    return getFightsPath() / f"{zoneID}_{encounterID}_{difficulty}.json"
+
+
+def getTempPath() -> Path:
+    return PROJECT_ROOT / "temp"
 
 
 def getAccessToken() -> str:

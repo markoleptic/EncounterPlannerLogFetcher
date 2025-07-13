@@ -1,5 +1,5 @@
 {
-	"cSpell.words": ["begincast", "dotenv", "venv"],
+	"cSpell.words": ["begincast", "cumcount", "dotenv", "ndarray", "venv"],
 	"cSpell.ignorePaths": [
 		"events",
 		"fights",
