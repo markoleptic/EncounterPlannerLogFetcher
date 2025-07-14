@@ -1,7 +1,9 @@
 import json
 from src.fetchReports import (
     fetchAndSaveEvents,
+    fetchAndSaveEventsForDungeon,
     fetchAndSaveFights,
+    fetchAndSaveFightsForDungeon,
     fetchAndSaveReports,
     fetchFightsFromReport,
 )
@@ -21,6 +23,11 @@ if __name__ == "__main__":
 
     # fetchAndSaveReports(45, 100, 10)
 
-    # fetchAndSaveFights(45, 62287, DifficultyType.Dungeon, KillType.Kills, False, 100)
-
-    printPhaseTimeStatistics(createEncounterDataFrame(44, 3132, DifficultyType.Mythic))
+    # fetchAndSaveFightsForDungeon(45, 62287)
+    # fetchAndSaveEventsForDungeon(45, 2403, 62287)
+    fetchAndSaveEventsForDungeon(45, 2380, 62287, True)
+    fetchAndSaveEventsForDungeon(45, 2381, 62287, True)
+    fetchAndSaveEventsForDungeon(45, 2401, 62287, True)
+    fetchAndSaveEventsForDungeon(45, 2403, 62287, True)
+    # df = createEncounterDataFrame(44, 3122, DifficultyType.Mythic)
+    # printPhaseTimeStatistics(df, True, False)

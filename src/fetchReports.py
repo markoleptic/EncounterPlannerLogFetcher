@@ -5,7 +5,13 @@ from gql.transport.requests import RequestsHTTPTransport
 from src.enums import DifficultyType, KillType
 from typing import Any, Dict, List, Set
 
-from src.utility import getAccessToken, getEventsFilePath, getFightsFilePath, getReportsFilePath
+from src.utility import (
+    getAccessToken,
+    getEventsFilePath,
+    getEventsFilePathForDungeon,
+    getFightsFilePath,
+    getReportsFilePath,
+)
 
 
 def fetchReports(
@@ -147,8 +153,6 @@ def fetchFightsFromReport(
                     id
                     startTime
                     fightPercentage
-                    keystoneLevel
-					keystoneTime
 					phaseTransitions {
 						id
 						startTime
@@ -163,6 +167,51 @@ def fetchFightsFromReport(
         "encounterID": encounterID,
         "difficulty": difficulty,
         "killType": killType,
+    }
+
+    return client.execute(gql(query), variables)
+
+
+def fetchDungeonFightsFromReport(accessToken: str, code: str, dungeonEncounterID: int) -> Dict[str, Any]:
+    transport = RequestsHTTPTransport(
+        url="https://www.warcraftlogs.com/api/v2/client",
+        headers={"Authorization": f"Bearer {accessToken}"},
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=True)
+    query = """
+    query (
+        $code: String
+        $difficulty: Int
+        $encounterID: Int
+        $killType: KillType
+    ) {
+        reportData {
+            report(code: $code) {
+                fights(
+                    difficulty: $difficulty
+                    encounterID: $encounterID
+                    killType: $killType
+                ) {
+                    id
+                    startTime
+                    fightPercentage
+                    keystoneLevel
+					keystoneTime
+                    dungeonPulls {
+                        encounterID
+                        startTime
+                        endTime
+                    }
+                }
+            }
+        }
+    }"""
+
+    variables = {
+        "code": code,
+        "encounterID": dungeonEncounterID,
+        "difficulty": DifficultyType.Dungeon,
+        "killType": KillType.Kills,
     }
 
     return client.execute(gql(query), variables)
@@ -225,7 +274,6 @@ def fetchAndSaveFights(
                             "id": fightID,
                             "startTime": startTime,
                             "fightPercentage": fight["fightPercentage"],
-                            "keystoneLevel": fight["keystoneLevel"] or None,
                             "phaseTransitions": fight["phaseTransitions"] or None,
                         }
                     )
@@ -240,22 +288,112 @@ def fetchAndSaveFights(
         json.dump(results, fightsFile, indent=2)
 
 
-def fetchEvents(accessToken: str, code: str, fightIDs: list[int], startTime: float) -> Dict[str, Any]:
+def fetchAndSaveFightsForDungeon(
+    zoneID: int,
+    encounterID: int,
+    overwriteExisting: bool = False,
+    foundFightLimit: int = 0,
+    reportsFilePath: Path | None = None,
+):
+    if reportsFilePath == None:
+        reportsFilePath = getReportsFilePath(zoneID)
+    if not reportsFilePath.exists():
+        print(f"No reports file for zoneID: {zoneID}")
+        return
+
+    with open(reportsFilePath) as reportsFile:
+        reports = json.load(reportsFile)
+        codes: List[str] = reports["codes"]
+
+    fightsFilePath = getFightsFilePath(zoneID, DifficultyType.Dungeon, encounterID)
+    results: List[Dict[str, Any]] = []
+
+    if not overwriteExisting and fightsFilePath.exists():
+        with open(fightsFilePath) as fightsFile:
+            results = json.load(fightsFile)
+
+    seenCodes: Set[str] = {r["code"] for r in results}
+
+    count = 0
+    token = getAccessToken()
+    for code in codes:
+        if code in seenCodes:
+            continue
+
+        print(f"Fetching fights for code: {code}...")
+        try:
+            result = fetchDungeonFightsFromReport(token, code, encounterID)
+        except Exception as e:
+            print(f"Error fetching report {code!r}: {e}")
+            break
+
+        fightsData = result["reportData"]["report"]["fights"]
+        print(f"Found {len(fightsData)} fights")
+
+        if len(fightsData) == 0:
+            results.append({"code": code})
+        else:
+            for fight in fightsData:
+                fightID = fight.get("id")
+                startTime = fight.get("startTime")
+                if fightID and startTime:
+                    results.append(
+                        {
+                            "code": code,
+                            "id": fightID,
+                            "startTime": startTime,
+                            "keystoneLevel": fight.get("keystoneLevel"),
+                            "dungeonPulls": fight.get("dungeonPulls"),
+                        }
+                    )
+                    count += 1
+        seenCodes.add(code)
+
+        if foundFightLimit > 0 and count >= foundFightLimit:
+            print(f"Hit found fight limit of {foundFightLimit}, stopping")
+            break
+
+    with open(fightsFilePath, "w") as fightsFile:
+        json.dump(results, fightsFile, indent=2)
+
+
+def fetchEvents(
+    accessToken: str, code: str, fightIDs: list[int], useFilter: bool, startTime: float, endTime: float = 0
+) -> Dict[str, Any]:
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
     client = Client(transport=transport, fetch_schema_from_transport=True)
+
+    if useFilter:
+        filterExpression = (
+            'source.disposition = "enemy" AND (type = "cast" OR type = "applybuff" OR type = "removebuff")'
+        )
+        dataType = "All"
+    else:
+        filterExpression = ""
+        dataType = "Casts"
+
     query = """
-    query($code: String, $fightIDs: [Int], $startTime: Float) {
+    query(
+        $code: String
+        $fightIDs: [Int]
+        $startTime: Float
+        $endTime: Float
+        $filterExpression: String
+        $dataType: EventDataType
+    ) {
         reportData {
             report(code: $code) {
                 events(
                     fightIDs: $fightIDs
-                    dataType: Casts
+                    filterExpression: $filterExpression
+                    dataType: $dataType
                     hostilityType: Enemies
                     limit: 10000
                     startTime: $startTime
+                    endTime: $endTime
                     wipeCutoff: 0
                 ) {
                     data
@@ -265,12 +403,24 @@ def fetchEvents(accessToken: str, code: str, fightIDs: list[int], startTime: flo
         }
     }"""
 
-    variables = {"code": code, "fightIDs": fightIDs, "startTime": startTime}
+    variables = {
+        "code": code,
+        "fightIDs": fightIDs,
+        "startTime": startTime,
+        "endTime": endTime,
+        "filterExpression": filterExpression,
+        "dataType": dataType,
+    }
 
     return client.execute(gql(query), variables)
 
 
-def fetchAndSaveEvents(zoneID: int, encounterID: int, difficulty: DifficultyType, overwriteExisting: bool = False):
+def fetchAndSaveEvents(
+    zoneID: int,
+    encounterID: int,
+    difficulty: DifficultyType,
+    overwriteExisting: bool = False,
+):
     fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
     if not fightsFilePath.exists():
         print(f"No fights file for zoneID:{zoneID}, encounterID:{encounterID}, difficulty:{difficulty}")
@@ -297,7 +447,7 @@ def fetchAndSaveEvents(zoneID: int, encounterID: int, difficulty: DifficultyType
             try:
                 print(f"Fetching events for code: {code}, fightID: {fightID}...")
                 while startTime != None:
-                    result = fetchEvents(token, code, [fightID], startTime)
+                    result = fetchEvents(token, code, [fightID], True, startTime)
                     currentEventsData = result["reportData"]["report"]["events"]["data"]
                     count = len(currentEventsData)
                     print(f"Found {count} events")
@@ -312,6 +462,65 @@ def fetchAndSaveEvents(zoneID: int, encounterID: int, difficulty: DifficultyType
         if len(eventsData) > 0:
             with open(eventsFilePath, "w") as eventsFile:
                 json.dump({"startTime": fightStartTime, "events": eventsData}, eventsFile, indent=2)
+
+
+def fetchAndSaveEventsForDungeon(
+    zoneID: int,
+    encounterID: int,
+    dungeonEncounterID: int,
+    overwriteExisting: bool = False,
+):
+    fightsFilePath = getFightsFilePath(zoneID, DifficultyType.Dungeon, dungeonEncounterID)
+
+    if not fightsFilePath.exists():
+        print(f"No fights file for zoneID:{zoneID}, encounterID:{encounterID}, dungeonEncounterID:{dungeonEncounterID}")
+        return
+
+    fightObjects = {}
+    with open(fightsFilePath) as fightsFile:
+        fightObjects = json.load(fightsFile)
+
+    token = getAccessToken()
+
+    for fightObject in fightObjects:
+        code = fightObject.get("code")
+        fightID = fightObject.get("id")
+        if not fightID:
+            continue
+
+        dungeonPulls = fightObject.get("dungeonPulls")
+        for pullID, pull in enumerate(dungeonPulls, start=1):
+            if pull.get("encounterID") == encounterID:
+                startTime = pull.get("startTime")
+                endTime = pull.get("endTime")
+                eventsData = []
+                eventsFilePath = getEventsFilePathForDungeon(
+                    zoneID, dungeonEncounterID, encounterID, code, fightID, pullID
+                )
+                if not eventsFilePath.exists() or overwriteExisting:
+                    try:
+                        print(f"Fetching events for code: {code}, fightID: {fightID}, pullID: {pullID}...")
+                        nextPageTimestamp = startTime
+                        while nextPageTimestamp != None:
+                            result = fetchEvents(token, code, [fightID], True, nextPageTimestamp, endTime)
+                            currentEventsData = result["reportData"]["report"]["events"]["data"]
+                            count = len(currentEventsData)
+                            print(f"Found {count} events")
+                            if count > 0:
+                                eventsData.extend(currentEventsData)
+                            nextPageTimestamp = result["reportData"]["report"]["events"]["nextPageTimestamp"]
+
+                    except Exception as e:
+                        print(f"Error fetching events for: {code}, fightID: {fightID}, pullID: {pullID}: {e}")
+                        return
+
+                if len(eventsData) > 0:
+                    with open(eventsFilePath, "w") as eventsFile:
+                        json.dump(
+                            {"startTime": startTime, "endTime": endTime, "pullID": pullID, "events": eventsData},
+                            eventsFile,
+                            indent=2,
+                        )
 
 
 def fetchReportsComplex(
@@ -330,7 +539,7 @@ def fetchReportsComplex(
     client = Client(transport=transport, fetch_schema_from_transport=True)
     query = """
     query (
-        $page: Int!,
+        $page: Int!
         $zoneID: Int!
         $encounterID: Int!
         $difficulty: Int!

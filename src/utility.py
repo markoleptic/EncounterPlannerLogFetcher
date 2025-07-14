@@ -25,6 +25,16 @@ def getEventsFilePath(zoneID: int, difficulty: DifficultyType, encounterID: int,
     return getEventsPath(zoneID, difficulty, encounterID) / f"{zoneID}_{encounterID}_{difficulty}_{code}_{fightID}.json"
 
 
+def getEventsFilePathForDungeon(
+    zoneID: int, dungeonEncounterID: int, encounterID: int, code: str, fightID: int, pullID: int
+) -> Path:
+    return (
+        getEventsPath(zoneID, DifficultyType.Dungeon, dungeonEncounterID)
+        / str(encounterID)
+        / f"{zoneID}_{encounterID}_{DifficultyType.Dungeon}_{code}_{fightID}_{pullID}.json"
+    )
+
+
 def getReportsPath() -> Path:
     return PROJECT_ROOT / "reports"
 
