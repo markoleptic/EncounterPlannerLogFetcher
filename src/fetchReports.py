@@ -1,9 +1,12 @@
 import json
+import time
 from pathlib import Path
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
+from gql.transport.exceptions import TransportServerError
 from src.enums import DifficultyType, KillType
-from typing import Any, Dict, List, Set
+from typing import Any, Callable, Dict, List, Set
+from functools import partial
 
 from src.utility import (
     getAccessToken,
@@ -12,6 +15,175 @@ from src.utility import (
     getFightsFilePath,
     getReportsFilePath,
 )
+
+rateLimitQuery = """
+query {
+    rateLimitData {
+        limitPerHour
+        pointsSpentThisHour
+        pointsResetIn
+    } 
+}
+"""
+
+fetchReportsQuery = """
+query (
+    $page: Int!
+    $zoneID: Int!
+    $reportLimit: Int
+    $startTime: Float
+) {
+    reportData {
+        reports(page: $page, zoneID: $zoneID, limit: $reportLimit, startTime: $startTime) {
+            current_page
+            data {
+                code
+                startTime
+                endTime
+            }
+            has_more_pages
+        }
+    }
+}"""
+
+fetchFightFromReportQuery = """
+query ($code: String, $fightIDs: [Int]) {
+    reportData {
+        report(code: $code) {
+            fights(fightIDs: $fightIDs) {
+                id
+                startTime
+            }
+        }
+    }
+}"""
+
+fetchFightsFromReportsQuery = """
+query (
+    $code: String
+    $difficulty: Int
+    $encounterID: Int
+    $killType: KillType
+) {
+    reportData {
+        report(code: $code) {
+            fights(
+                difficulty: $difficulty
+                encounterID: $encounterID
+                killType: $killType
+            ) {
+                id
+                startTime
+                fightPercentage
+                phaseTransitions {
+                    id
+                    startTime
+                }
+            }
+        }
+    }
+}"""
+
+fetchDungeonFightsFromReportQuery = """
+query (
+    $code: String
+    $difficulty: Int
+    $encounterID: Int
+    $killType: KillType
+) {
+    reportData {
+        report(code: $code) {
+            fights(
+                difficulty: $difficulty
+                encounterID: $encounterID
+                killType: $killType
+            ) {
+                id
+                startTime
+                fightPercentage
+                keystoneLevel
+                keystoneTime
+                dungeonPulls {
+                    encounterID
+                    startTime
+                    endTime
+                }
+            }
+        }
+    }
+}"""
+
+fetchEventsQuery = """
+query(
+    $code: String
+    $fightIDs: [Int]
+    $startTime: Float
+    $endTime: Float
+    $filterExpression: String
+    $dataType: EventDataType
+) {
+    reportData {
+        report(code: $code) {
+            events(
+                fightIDs: $fightIDs
+                filterExpression: $filterExpression
+                dataType: $dataType
+                hostilityType: Enemies
+                limit: 10000
+                startTime: $startTime
+                endTime: $endTime
+                wipeCutoff: 0
+            ) {
+                data
+                nextPageTimestamp
+            }
+        }
+    }
+}"""
+
+nextPointsResetTime = 0
+
+
+def updatePointsResetTime(accessToken: str):
+    transport = RequestsHTTPTransport(
+        url="https://www.warcraftlogs.com/api/v2/client",
+        headers={"Authorization": f"Bearer {accessToken}"},
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=False)
+    rateLimitResponse = client.execute(gql(rateLimitQuery))
+    rateLimitData = rateLimitResponse.get("rateLimitData")
+    secondsUntilPointsReset = 3600
+    if rateLimitData:
+        secondsUntilPointsReset = rateLimitData.get("pointsResetIn")
+    nextPointsResetTime = time.time() + secondsUntilPointsReset
+    print(f"Updated next points reset time: {nextPointsResetTime}")
+
+
+updatePointsResetTime(getAccessToken())
+
+
+def sleepUntilPointsReset(
+    transportServerError: TransportServerError, accessToken: str, callback: Callable[[], Any]
+) -> Any:
+    if transportServerError.code == 429:
+        time.sleep(nextPointsResetTime)
+        updatePointsResetTime(accessToken)
+        return callback()
+    return None
+
+
+def executeQueryWithRetry(accessToken: str, query: str, variables: Dict[str, Any]) -> Any:
+    transport = RequestsHTTPTransport(
+        url="https://www.warcraftlogs.com/api/v2/client",
+        headers={"Authorization": f"Bearer {accessToken}"},
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=False)
+
+    try:
+        return client.execute(gql(query), variables)
+    except TransportServerError as e:
+        if not sleepUntilPointsReset(e, accessToken, partial(executeQueryWithRetry, accessToken, query, variables)):
+            raise
 
 
 def fetchReports(
@@ -34,30 +206,10 @@ def fetchReports(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
-    query = """
-    query (
-        $page: Int!
-        $zoneID: Int!
-        $reportLimit: Int
-        $startTime: Float
-    ) {
-        reportData {
-            reports(page: $page, zoneID: $zoneID, limit: $reportLimit, startTime: $startTime) {
-                current_page
-                data {
-                    code
-                    startTime
-				    endTime
-                }
-                has_more_pages
-            }
-        }
-    }"""
-
+    client = Client(transport=transport, fetch_schema_from_transport=False)
     variables = {"page": page, "zoneID": zoneID, "reportLimit": reportLimit, "startTime": startTime}
 
-    return client.execute(gql(query), variables)
+    return executeQueryWithRetry(accessToken, fetchReportsQuery, variables)
 
 
 def fetchAndSaveReports(
@@ -119,6 +271,7 @@ def fetchAndSaveReports(
             page += 1
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
+            break
 
     with open(reportsFilePath, "w") as reportsFile:
         json.dump(
@@ -144,25 +297,13 @@ def fetchFightFromReport(accessToken: str, code: str, fightID: int) -> Dict[str,
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
-    query = """
-    query ($code: String, $fightIDs: [Int]) {
-        reportData {
-            report(code: $code) {
-                fights(fightIDs: $fightIDs) {
-                    id
-                    startTime
-                }
-            }
-        }
-    }"""
-
+    client = Client(transport=transport, fetch_schema_from_transport=False)
     variables = {
         "code": code,
         "fightIDs": [fightID],
     }
 
-    return client.execute(gql(query), variables)
+    return executeQueryWithRetry(accessToken, fetchFightFromReportQuery, variables)
 
 
 def fetchFightsFromReport(
@@ -185,32 +326,7 @@ def fetchFightsFromReport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
-    query = """
-    query (
-        $code: String
-        $difficulty: Int
-        $encounterID: Int
-        $killType: KillType
-    ) {
-        reportData {
-            report(code: $code) {
-                fights(
-                    difficulty: $difficulty
-                    encounterID: $encounterID
-                    killType: $killType
-                ) {
-                    id
-                    startTime
-                    fightPercentage
-					phaseTransitions {
-						id
-						startTime
-					}
-                }
-            }
-        }
-    }"""
+    client = Client(transport=transport, fetch_schema_from_transport=False)
 
     variables = {
         "code": code,
@@ -219,7 +335,7 @@ def fetchFightsFromReport(
         "killType": killType,
     }
 
-    return client.execute(gql(query), variables)
+    return executeQueryWithRetry(accessToken, fetchFightsFromReportsQuery, variables)
 
 
 def fetchDungeonFightsFromReport(accessToken: str, code: str, dungeonEncounterID: int) -> Dict[str, Any]:
@@ -239,36 +355,7 @@ def fetchDungeonFightsFromReport(accessToken: str, code: str, dungeonEncounterID
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
-    query = """
-    query (
-        $code: String
-        $difficulty: Int
-        $encounterID: Int
-        $killType: KillType
-    ) {
-        reportData {
-            report(code: $code) {
-                fights(
-                    difficulty: $difficulty
-                    encounterID: $encounterID
-                    killType: $killType
-                ) {
-                    id
-                    startTime
-                    fightPercentage
-                    keystoneLevel
-					keystoneTime
-                    dungeonPulls {
-                        encounterID
-                        startTime
-                        endTime
-                    }
-                }
-            }
-        }
-    }"""
-
+    client = Client(transport=transport, fetch_schema_from_transport=False)
     variables = {
         "code": code,
         "encounterID": dungeonEncounterID,
@@ -276,7 +363,7 @@ def fetchDungeonFightsFromReport(accessToken: str, code: str, dungeonEncounterID
         "killType": KillType.Kills,
     }
 
-    return client.execute(gql(query), variables)
+    return executeQueryWithRetry(accessToken, fetchDungeonFightsFromReportQuery, variables)
 
 
 def fetchAndSaveFights(
@@ -467,7 +554,7 @@ def fetchEvents(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
+    client = Client(transport=transport, fetch_schema_from_transport=False)
 
     if useFilter:
         filterExpression = (
@@ -478,34 +565,6 @@ def fetchEvents(
         filterExpression = ""
         dataType = "Casts"
 
-    query = """
-    query(
-        $code: String
-        $fightIDs: [Int]
-        $startTime: Float
-        $endTime: Float
-        $filterExpression: String
-        $dataType: EventDataType
-    ) {
-        reportData {
-            report(code: $code) {
-                events(
-                    fightIDs: $fightIDs
-                    filterExpression: $filterExpression
-                    dataType: $dataType
-                    hostilityType: Enemies
-                    limit: 10000
-                    startTime: $startTime
-                    endTime: $endTime
-                    wipeCutoff: 0
-                ) {
-                    data
-                    nextPageTimestamp
-                }
-            }
-        }
-    }"""
-
     variables = {
         "code": code,
         "fightIDs": fightIDs,
@@ -515,7 +574,7 @@ def fetchEvents(
         "dataType": dataType,
     }
 
-    return client.execute(gql(query), variables)
+    return executeQueryWithRetry(accessToken, fetchEventsQuery, variables)
 
 
 def fetchAndSaveEvents(
@@ -674,7 +733,7 @@ def fetchReportsComplex(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
     )
-    client = Client(transport=transport, fetch_schema_from_transport=True)
+    client = Client(transport=transport, fetch_schema_from_transport=False)
     query = """
     query (
         $page: Int!
@@ -728,4 +787,4 @@ def fetchReportsComplex(
         "reportLimit": reportLimit,
     }
 
-    return client.execute(gql(query), variables)
+    return executeQueryWithRetry(accessToken, query, variables)
