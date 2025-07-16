@@ -97,6 +97,7 @@ def createEncounterDataFrame(
     Returns:
         pd.DataFrame: Empty if the fights file doesn't exist or if no fights were found.
     """
+
     if difficulty == DifficultyType.Dungeon:
         fightsFilePath = getFightsFilePath(zoneID, difficulty, dungeonEncounterID)
     else:
@@ -120,17 +121,6 @@ def createEncounterDataFrame(
         if startTime == None:
             continue
 
-        rawPhaseTransitions = fightData.get("phaseTransitions") or []
-        # if no real transitions, assume one phase starting at the very beginning
-        if not rawPhaseTransitions:
-            rawPhaseTransitions = [{"id": 0, "startTime": fightData["startTime"]}]
-
-        phaseTransitions: List[PhaseTransition] = []
-        for normalizedPhaseNumber, phase in enumerate(
-            sorted(rawPhaseTransitions, key=lambda pt: pt["startTime"]), start=1
-        ):
-            phaseTransitions.append(PhaseTransition(id=normalizedPhaseNumber, startTime=phase["startTime"]))
-
         fightCode = fightData["code"]
         fightID = fightData["id"]
 
@@ -139,11 +129,31 @@ def createEncounterDataFrame(
             dungeonPulls = fightData["dungeonPulls"]
             for pullID, pull in enumerate(dungeonPulls, start=1):
                 if pull.get("encounterID") == encounterID:
+                    rawPhaseTransitions = fightData.get("phaseTransitions") or []
+                    # if no real transitions, assume one phase starting at the very beginning
+                    if not rawPhaseTransitions:
+                        rawPhaseTransitions = [{"id": 0, "startTime": pull["startTime"]}]
+
+                    phaseTransitions: List[PhaseTransition] = []
+                    for normalizedPhaseNumber, phase in enumerate(
+                        sorted(rawPhaseTransitions, key=lambda pt: pt["startTime"]), start=1
+                    ):
+                        phaseTransitions.append(PhaseTransition(id=normalizedPhaseNumber, startTime=phase["startTime"]))
                     eventsFilePath = getEventsFilePathForDungeon(
                         zoneID, dungeonEncounterID, encounterID, fightCode, fightID, pullID
                     )
                     appendFightEvent(eventsFilePath, allFightEvents, phaseTransitions, fightCode, fightID, pullID)
         else:
+            rawPhaseTransitions = fightData.get("phaseTransitions") or []
+            # if no real transitions, assume one phase starting at the very beginning
+            if not rawPhaseTransitions:
+                rawPhaseTransitions = [{"id": 0, "startTime": fightData["startTime"]}]
+
+            phaseTransitions: List[PhaseTransition] = []
+            for normalizedPhaseNumber, phase in enumerate(
+                sorted(rawPhaseTransitions, key=lambda pt: pt["startTime"]), start=1
+            ):
+                phaseTransitions.append(PhaseTransition(id=normalizedPhaseNumber, startTime=phase["startTime"]))
             eventsFilePath = getEventsFilePath(zoneID, difficulty, encounterID, fightCode, fightID)
             appendFightEvent(eventsFilePath, allFightEvents, phaseTransitions, fightCode, fightID)
 
@@ -193,6 +203,7 @@ def aggregatePhaseTimeStatistics(dataFrame: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: A new DataFrame grouped by `abilityID`, `phase`, `type`, `castIndex`, aggregated across
         `phaseTime`.
     """
+
     phaseTimeStatistics = (
         dataFrame.groupby(["abilityID", "phase", "type", "castIndex"])["phaseTime"]
         .agg(count="count", mean="mean", std="std", min="min", max="max")
@@ -217,6 +228,7 @@ def printPhaseTimeStatistics(
         printDetailedCasts (bool, optional): Prints aggregated phase time statistics. Defaults to True.
         printAverageCastTimes (bool, optional): Prints average cast times for abilities. Defaults to True.
     """
+
     phaseTimeStatistics = aggregatePhaseTimeStatistics(dataFrame)
 
     if printAbilityUsage:

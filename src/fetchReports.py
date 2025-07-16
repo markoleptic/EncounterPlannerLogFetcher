@@ -17,6 +17,19 @@ from src.utility import (
 def fetchReports(
     accessToken: str, page: int, zoneID: int, reportLimit: int = 0, startTime: float = 0.0
 ) -> Dict[str, Any]:
+    """Fetches a page of reports.
+
+    Args:
+        accessToken (str): WarcraftLogs API access token.
+        page (int): Current page for the query.
+        zoneID (int): WarcraftLogs API zone ID for the raid or dungeon.
+        reportLimit (int, optional): Upper limit on the number of reports per page. Defaults to 0.
+        startTime (float, optional): Reports will be filtered to have occurred after this time. Defaults to 0.0.
+
+    Returns:
+        Dict[str, Any]: Found reports.
+    """
+
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
@@ -54,6 +67,19 @@ def fetchAndSaveReports(
     startTime: float = -1.0,
     reportsFilePath: Path | None = None,
 ):
+    """Fetches reports codes and saves them to file. If a matching reports file exists, it will be loaded so that
+    duplicate codes are not recorded. If startTime is not specified and a matching reports file exists, it will use the
+    saved start time to limit the fetched reports to have occurred after this time.
+
+    Args:
+        zoneID (int): WarcraftLogs API zone ID for the raid or dungeon.
+        reportLimit (int, optional): Upper limit on the number of reports per page. Defaults to 100.
+        maxPages (int, optional): Upper limit on the number of total pages. Defaults to 10.
+        startTime (float, optional): Reports will be filtered to have occurred after this time. Defaults to -1.0.
+        reportsFilePath (Path | None, optional): If specified, uses this file for report codes, otherwise defaulting to
+            the default report file path for the zoneID. Defaults to None.
+    """
+
     token = getAccessToken()
     page = 1
     reportCodes = []
@@ -103,6 +129,17 @@ def fetchAndSaveReports(
 
 
 def fetchFightFromReport(accessToken: str, code: str, fightID: int) -> Dict[str, Any]:
+    """Obtains a single fight from a report.
+
+    Args:
+        accessToken (str): WarcraftLogs API access token.
+        code (str): Report code.
+        fightID (int): Fight ID in the report.
+
+    Returns:
+        Dict[str, Any]: Found fight.
+    """
+
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
@@ -131,6 +168,19 @@ def fetchFightFromReport(accessToken: str, code: str, fightID: int) -> Dict[str,
 def fetchFightsFromReport(
     accessToken: str, code: str, encounterID: int, difficulty: DifficultyType, killType: KillType
 ) -> Dict[str, Any]:
+    """Fetches fights from a report for a given raid.
+
+    Args:
+        accessToken (str): WarcraftLogs API access token.
+        code (str): Report code.
+        encounterID (int): Encounter ID for the boss (Translates to dungeonEncounterID in game).
+        difficulty (DifficultyType): Difficulty type to filter fights by.
+        killType (KillType): Kill type to filter fights by.
+
+    Returns:
+        Dict[str, Any]: Found fights.
+    """
+
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
@@ -173,6 +223,18 @@ def fetchFightsFromReport(
 
 
 def fetchDungeonFightsFromReport(accessToken: str, code: str, dungeonEncounterID: int) -> Dict[str, Any]:
+    """Fetches fights from a report for a given dungeon. Each fight entry includes dungeon pulls that are tagged with
+    the actual encounter ID, relative start time, and relative end time.
+
+    Args:
+        accessToken (str): WarcraftLogs API access token.
+        code (str): Report code.
+        dungeonEncounterID (int): The WarcraftLogs dungeon encounter ID (doesn't translate to anything in game?)
+
+    Returns:
+        Dict[str, Any]: Found fights.
+    """
+
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
@@ -226,6 +288,20 @@ def fetchAndSaveFights(
     foundFightLimit: int = 0,
     reportsFilePath: Path | None = None,
 ):
+    """Fetches fights for raid encounters from a list of report IDs and saves the fight IDs to the fights directory as
+    a single file.
+
+    Args:
+        zoneID (int): WarcraftLogs API zone ID for the raid.
+        encounterID (int): Encounter ID for the boss (Translates to dungeonEncounterID in game).
+        difficulty (DifficultyType): Difficulty type to filter fights by.
+        killType (KillType): Kill type to filter fights by.
+        overwriteExisting (bool, optional): Whether to overwrite the fights file. Defaults to False.
+        foundFightLimit (int, optional): Upper limit on the number of fights to fetch. Defaults to 0.
+        reportsFilePath (Path | None, optional): If specified, uses this file for report codes, otherwise defaulting to
+            the default report file path for the zoneID. Defaults to None.
+    """
+
     if reportsFilePath == None:
         reportsFilePath = getReportsFilePath(zoneID)
     if not reportsFilePath.exists():
@@ -290,11 +366,24 @@ def fetchAndSaveFights(
 
 def fetchAndSaveFightsForDungeon(
     zoneID: int,
-    encounterID: int,
+    dungeonEncounterID: int,
     overwriteExisting: bool = False,
     foundFightLimit: int = 0,
     reportsFilePath: Path | None = None,
 ):
+    """Fetches fights for dungeon encounters from a list of report IDs and saves the fights to the fights directory
+    as a single file. Each fight entry includes dungeon pulls that are tagged with the actual encounter ID, relative
+    start time, and relative end time.
+
+    Args:
+        zoneID (int): WarcraftLogs API zone ID for the dungeon.
+        dungeonEncounterID (int): The WarcraftLogs dungeon encounter ID (doesn't translate to anything in game?)
+        overwriteExisting (bool, optional): Whether to overwrite the fights file. Defaults to False. Defaults to False.
+        foundFightLimit (int, optional): Upper limit on the number of fights to fetch. Defaults to 0.
+        reportsFilePath (Path | None, optional): If specified, uses this file for report codes, otherwise defaulting to
+            the default report file path for the zoneID. Defaults to None.
+    """
+
     if reportsFilePath == None:
         reportsFilePath = getReportsFilePath(zoneID)
     if not reportsFilePath.exists():
@@ -305,7 +394,7 @@ def fetchAndSaveFightsForDungeon(
         reports = json.load(reportsFile)
         codes: List[str] = reports["codes"]
 
-    fightsFilePath = getFightsFilePath(zoneID, DifficultyType.Dungeon, encounterID)
+    fightsFilePath = getFightsFilePath(zoneID, DifficultyType.Dungeon, dungeonEncounterID)
     results: List[Dict[str, Any]] = []
 
     if not overwriteExisting and fightsFilePath.exists():
@@ -322,7 +411,7 @@ def fetchAndSaveFightsForDungeon(
 
         print(f"Fetching fights for code: {code}...")
         try:
-            result = fetchDungeonFightsFromReport(token, code, encounterID)
+            result = fetchDungeonFightsFromReport(token, code, dungeonEncounterID)
         except Exception as e:
             print(f"Error fetching report {code!r}: {e}")
             break
@@ -360,6 +449,20 @@ def fetchAndSaveFightsForDungeon(
 def fetchEvents(
     accessToken: str, code: str, fightIDs: list[int], useFilter: bool, startTime: float, endTime: float = 0
 ) -> Dict[str, Any]:
+    """Fetches events from a report and fight matching the report code and fight ID.
+
+    Args:
+        accessToken (str): WarcraftLogs API access token.
+        code (str): Report code.
+        fightIDs (list[int]): Fight IDs in the report.
+        useFilter (bool): If true, applybuff and removebuff events will be included.
+        startTime (float): Start time to limit the events to.
+        endTime (float, optional): End time to limit the events to. Defaults to 0.
+
+    Returns:
+        Dict[str, Any]: Found events.
+    """
+
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
@@ -421,6 +524,16 @@ def fetchAndSaveEvents(
     difficulty: DifficultyType,
     overwriteExisting: bool = False,
 ):
+    """Fetches and saves events for a raid encounter using the fights file corresponding to the zone ID, encounter ID,
+    and difficulty type. Each fight's events are saved in a separate file.
+
+    Args:
+        zoneID (int): WarcraftLogs API zone ID for the dungeon.
+        encounterID (int): Encounter ID for the boss (Translates to dungeonEncounterID in game).
+        difficulty (DifficultyType): Difficulty type fights were filtered by.
+        overwriteExisting (bool, optional): Whether to overwrite the events files. Defaults to False.
+    """
+
     fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
     if not fightsFilePath.exists():
         print(f"No fights file for zoneID:{zoneID}, encounterID:{encounterID}, difficulty:{difficulty}")
@@ -470,6 +583,16 @@ def fetchAndSaveEventsForDungeon(
     dungeonEncounterID: int,
     overwriteExisting: bool = False,
 ):
+    """Fetches and saves events for a dungeon encounter using the fights file corresponding to the zone ID, encounter
+    ID, and dungeon encounter ID. Each fight's events are saved in a separate file.
+
+    Args:
+        zoneID (int): WarcraftLogs API zone ID for the dungeon.
+        encounterID (int): Encounter ID for the boss (Translates to dungeonEncounterID in game).
+        dungeonEncounterID (int): The WarcraftLogs dungeon encounter ID (doesn't translate to anything in game?)
+        overwriteExisting (bool, optional): Whether to overwrite the events files. Defaults to False.
+    """
+
     fightsFilePath = getFightsFilePath(zoneID, DifficultyType.Dungeon, dungeonEncounterID)
 
     if not fightsFilePath.exists():
@@ -532,6 +655,21 @@ def fetchReportsComplex(
     killType: KillType,
     reportLimit: int = 0,
 ) -> Dict[str, Any]:
+    """Currently unused due to high query complexity.
+
+    Args:
+        accessToken (str): WarcraftLogs API access token.
+        page (int): Current page for the query.
+        zoneID (int): WarcraftLogs API zone ID for the raid or dungeon.
+        encounterID (int):Encounter ID for the boss or WarcraftLogs dungeon encounter ID if fetching for a dungeon.
+        difficulty (DifficultyType): Difficulty type to filter fights by.
+        killType (KillType): Kill type to filter fights by.
+        reportLimit (int, optional): Upper limit on the number of reports per page. Defaults to 0.
+
+    Returns:
+        Dict[str, Any]: Found reports
+    """
+
     transport = RequestsHTTPTransport(
         url="https://www.warcraftlogs.com/api/v2/client",
         headers={"Authorization": f"Bearer {accessToken}"},
