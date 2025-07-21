@@ -128,7 +128,6 @@ query(
                 fightIDs: $fightIDs
                 filterExpression: $filterExpression
                 dataType: $dataType
-                hostilityType: Enemies
                 limit: 10000
                 startTime: $startTime
                 endTime: $endTime
@@ -419,7 +418,7 @@ def fetchAndSaveFights(
             result = fetchFightsFromReport(token, code, encounterID, difficulty, killType)
         except Exception as e:
             print(f"Error fetching report {code!r}: {e}")
-            break
+            continue
 
         fightsData = result["reportData"]["report"]["fights"]
         print(f"Found {len(fightsData)} fights")
@@ -557,9 +556,7 @@ def fetchEvents(
     client = Client(transport=transport, fetch_schema_from_transport=False)
 
     if useFilter:
-        filterExpression = (
-            'source.disposition = "enemy" AND (type = "cast" OR type = "applybuff" OR type = "removebuff")'
-        )
+        filterExpression = 'ability.id != 1 AND (source.rawDisposition = "enemy" OR ability.id = 181089) AND (type = "begincast" OR type = "cast" OR type = "applybuff" OR type = "removebuff")'
         dataType = "All"
     else:
         filterExpression = ""
