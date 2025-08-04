@@ -1,7 +1,9 @@
+import asyncio
 import json
 import time
 from pathlib import Path
 from gql import Client, gql
+from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.requests import RequestsHTTPTransport
 from gql.transport.exceptions import TransportServerError
 from src.enums import DifficultyType, KillType
@@ -140,15 +142,26 @@ query(
     }
 }"""
 
-nextPointsResetTime = 0
+nextPointsResetTime = 0.0
+
+
+def makeClient(accessToken: str, asyncTransport: bool) -> Client:
+    if asyncTransport:
+        transport = AIOHTTPTransport(
+            url="https://www.warcraftlogs.com/api/v2/client", headers={"Authorization": f"Bearer {accessToken}"}
+        )
+        return Client(transport=transport, fetch_schema_from_transport=False)
+    else:
+        transport = RequestsHTTPTransport(
+            url="https://www.warcraftlogs.com/api/v2/client",
+            headers={"Authorization": f"Bearer {accessToken}"},
+        )
+        return Client(transport=transport, fetch_schema_from_transport=False)
 
 
 def updatePointsResetTime(accessToken: str):
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
+    global nextPointsResetTime
+    client = makeClient(accessToken, False)
     rateLimitResponse = client.execute(gql(rateLimitQuery))
     rateLimitData = rateLimitResponse.get("rateLimitData")
     secondsUntilPointsReset = 3600
@@ -156,6 +169,7 @@ def updatePointsResetTime(accessToken: str):
         secondsUntilPointsReset = rateLimitData.get("pointsResetIn")
     nextPointsResetTime = time.time() + secondsUntilPointsReset
     print(f"Updated next points reset time: {nextPointsResetTime}")
+    print(time.time())
 
 
 updatePointsResetTime(getAccessToken())
@@ -165,24 +179,152 @@ def sleepUntilPointsReset(
     transportServerError: TransportServerError, accessToken: str, callback: Callable[[], Any]
 ) -> Any:
     if transportServerError.code == 429:
-        time.sleep(nextPointsResetTime)
+        delay = max(0, nextPointsResetTime - time.time())
+        print(f"Sleeping for {delay:.2f} seconds due to rate limit...")
+        time.sleep(delay)
         updatePointsResetTime(accessToken)
         return callback()
     return None
 
 
-def executeQueryWithRetry(accessToken: str, query: str, variables: Dict[str, Any]) -> Any:
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
+resetTimeLock = asyncio.Lock()
 
+
+async def updatePointsResetTimeAsync(accessToken: str):
+    global asyncNextPointsResetTime
+    client = makeClient(accessToken, False)
+    try:
+        rateLimitResponse = client.execute(gql(rateLimitQuery))
+        rateLimitData = rateLimitResponse.get("rateLimitData")
+        if rateLimitData:
+            secondsUntilPointsReset = rateLimitData.get("pointsResetIn", 3600)
+    except Exception:
+        secondsUntilPointsReset = 3600  # Fallback in case of error
+    async with resetTimeLock:
+        asyncNextPointsResetTime = time.time() + secondsUntilPointsReset
+        print(f"Updated next points reset time: {asyncNextPointsResetTime}")
+
+
+async def sleepUntilPointsResetAsync(e: TransportServerError, accessToken: str, callback: Callable[[], Any]):
+    if e.code == 429:
+        async with resetTimeLock:
+            delay = max(0, asyncNextPointsResetTime - time.time())
+        print(f"Sleeping for {delay:.2f} seconds due to rate limit...")
+        await asyncio.sleep(delay)
+        await updatePointsResetTimeAsync(accessToken)
+        return await callback()
+    raise e
+
+
+def executeQueryWithRetry(accessToken: str, query: str, variables: Dict[str, Any]) -> Any:
+    client = makeClient(accessToken, False)
     try:
         return client.execute(gql(query), variables)
     except TransportServerError as e:
         if not sleepUntilPointsReset(e, accessToken, partial(executeQueryWithRetry, accessToken, query, variables)):
             raise
+
+
+async def executeQueryWithRetryAsync(accessToken: str, client: Client, query: str, variables: Dict[str, Any]) -> Any:
+    async def retry_callback():
+        return await executeQueryWithRetryAsync(accessToken, client, query, variables)
+
+    try:
+        return await client.execute_async(gql(query), variable_values=variables)
+    except TransportServerError as e:
+        return await sleepUntilPointsResetAsync(e, accessToken, retry_callback)
+
+
+async def fetchSingleReport(
+    sem: asyncio.Semaphore, token: str, code: str, encounterID: int, difficulty: DifficultyType, killType: KillType
+) -> List[Dict[str, Any]]:
+    """Fetch fights for a single report code, return list of results or empty list on error."""
+    async with sem:
+        client = makeClient(token, True)
+        variables = {
+            "code": code,
+            "encounterID": encounterID,
+            "difficulty": difficulty,
+            "killType": killType,
+        }
+        try:
+            data = await executeQueryWithRetryAsync(token, client, fetchFightsFromReportsQuery, variables)
+        except Exception as e:
+            print(f"[{code}] error: {e}")
+            return []  # skip this code
+
+    fights = data["reportData"]["report"]["fights"]
+    out = []
+    if not fights:
+        out.append({"code": code})
+    else:
+        for fight in fights:
+            fid = fight.get("id")
+            st = fight.get("startTime")
+            if fid and st:
+                out.append(
+                    {
+                        "code": code,
+                        "id": fid,
+                        "startTime": st,
+                        "fightPercentage": fight["fightPercentage"],
+                        "phaseTransitions": fight["phaseTransitions"] or None,
+                    }
+                )
+    print(f"[{code}] found {len(fights)} fights")
+    return out
+
+
+def fetchAndSaveFightsAsync(
+    zoneID: int,
+    encounterID: int,
+    difficulty: DifficultyType,
+    killType: KillType,
+    overwriteExisting: bool = False,
+    foundFightLimit: int = 0,
+    reportsFilePath: Path | None = None,
+    max_concurrency: int = 4,
+):
+    if reportsFilePath is None:
+        reportsFilePath = getReportsFilePath(zoneID)
+    if not reportsFilePath.exists():
+        print(f"No reports file for zoneID: {zoneID}")
+        return
+
+    with open(reportsFilePath) as f:
+        codes: List[str] = json.load(f)["codes"]
+
+    fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
+    results = []
+    if not overwriteExisting and fightsFilePath.exists():
+        with open(fightsFilePath) as f:
+            results = json.load(f)
+
+    seenCodes: Set[str] = set()
+    if not overwriteExisting:
+        seenCodes = {r["code"] for r in results}
+    codesToFetch = [c for c in codes if c not in seenCodes]
+    token = getAccessToken()
+
+    async def runner():
+        sem = asyncio.Semaphore(max_concurrency)
+        tasks = [fetchSingleReport(sem, token, code, encounterID, difficulty, killType) for code in codesToFetch]
+        all_batches = await asyncio.gather(*tasks)
+        # flatten and respect foundFightLimit
+        count = 0
+        for batch in all_batches:
+            for item in batch:
+                results.append(item)
+                if "id" in item:
+                    count += 1
+                    if 0 < foundFightLimit <= count:
+                        print(f"Hit limit {foundFightLimit}, stopping")
+                        return
+
+    asyncio.run(runner())
+
+    with open(fightsFilePath, "w") as f:
+        json.dump(results, f, indent=2)
 
 
 def fetchReports(
@@ -200,14 +342,7 @@ def fetchReports(
     Returns:
         Dict[str, Any]: Found reports.
     """
-
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
     variables = {"page": page, "zoneID": zoneID, "reportLimit": reportLimit, "startTime": startTime}
-
     return executeQueryWithRetry(accessToken, fetchReportsQuery, variables)
 
 
@@ -240,11 +375,13 @@ def fetchAndSaveReports(
     if reportsFilePath.exists():
         with open(reportsFilePath) as reportsFile:
             lastData = json.load(reportsFile)
-            reportCodes = lastData["codes"]
-            print(f"Loaded: {len(reportCodes)} codes from {reportsFilePath}")
-            if startTime == -1.0:
-                startTime = lastData.get("startTime", 0.0)
-                print(f"Using last saved start time: {startTime}")
+            maybeReportCodes = lastData.get("codes")
+            if maybeReportCodes:
+                reportCodes = maybeReportCodes
+                print(f"Loaded: {len(reportCodes)} codes from {reportsFilePath}")
+                if startTime == -1.0:
+                    startTime = lastData.get("startTime", 0.0)
+                    print(f"Using last saved start time: {startTime}")
 
     maxStartTime = startTime
 
@@ -291,17 +428,10 @@ def fetchFightFromReport(accessToken: str, code: str, fightID: int) -> Dict[str,
     Returns:
         Dict[str, Any]: Found fight.
     """
-
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
     variables = {
         "code": code,
         "fightIDs": [fightID],
     }
-
     return executeQueryWithRetry(accessToken, fetchFightFromReportQuery, variables)
 
 
@@ -320,20 +450,12 @@ def fetchFightsFromReport(
     Returns:
         Dict[str, Any]: Found fights.
     """
-
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
-
     variables = {
         "code": code,
         "encounterID": encounterID,
         "difficulty": difficulty,
         "killType": killType,
     }
-
     return executeQueryWithRetry(accessToken, fetchFightsFromReportsQuery, variables)
 
 
@@ -349,19 +471,12 @@ def fetchDungeonFightsFromReport(accessToken: str, code: str, dungeonEncounterID
     Returns:
         Dict[str, Any]: Found fights.
     """
-
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
     variables = {
         "code": code,
         "encounterID": dungeonEncounterID,
         "difficulty": DifficultyType.Dungeon,
         "killType": KillType.Kills,
     }
-
     return executeQueryWithRetry(accessToken, fetchDungeonFightsFromReportQuery, variables)
 
 
@@ -548,13 +663,6 @@ def fetchEvents(
     Returns:
         Dict[str, Any]: Found events.
     """
-
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
-
     if useFilter:
         filterExpression = 'ability.id != 1 AND (source.rawDisposition = "enemy" OR ability.id = 181089) AND (type = "begincast" OR type = "cast" OR type = "applybuff" OR type = "removebuff")'
         dataType = "All"
@@ -626,7 +734,7 @@ def fetchAndSaveEvents(
 
             except Exception as e:
                 print(f"Error fetching events for: {code}, fightID: {fightID}: {e}")
-                return
+                continue
 
         if len(eventsData) > 0:
             with open(eventsFilePath, "w") as eventsFile:
@@ -725,12 +833,6 @@ def fetchReportsComplex(
     Returns:
         Dict[str, Any]: Found reports
     """
-
-    transport = RequestsHTTPTransport(
-        url="https://www.warcraftlogs.com/api/v2/client",
-        headers={"Authorization": f"Bearer {accessToken}"},
-    )
-    client = Client(transport=transport, fetch_schema_from_transport=False)
     query = """
     query (
         $page: Int!

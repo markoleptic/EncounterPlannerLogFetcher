@@ -89,10 +89,11 @@ def appendFightEvent(
             for event in eventData["events"]:
                 if event.get("melee"):
                     continue
-                timestamp = event["timestamp"]
 
                 phaseID = 1
                 phaseStartTime = fightStartTime
+
+                timestamp = event["timestamp"]
                 for phaseTransition in phaseTransitions:
                     if timestamp >= phaseTransition.startTime:
                         phaseID = phaseTransition.id
@@ -104,6 +105,7 @@ def appendFightEvent(
                         if timestamp >= abilityPhaseTransition.startTime:
                             phaseID = abilityPhaseTransition.id
                             phaseStartTime = abilityPhaseTransition.startTime
+
                 allFightEvents.append(
                     Event(
                         timestamp=timestamp,
@@ -175,7 +177,7 @@ def createEncounterDataFrame(
     phaseAbilities: List[PhaseAbilityTransition] = [],
     ignorePhaseTransitions: bool = False,
 ) -> pd.DataFrame:
-    """Creates a Pandas DataFrame for the given encounter using all events events matching the specified criteria.
+    """Creates a Pandas DataFrame for the given encounter using all events matching the specified criteria.
 
     Args:
         zoneID (int): ZoneID used when fetching data.
@@ -217,26 +219,30 @@ def createEncounterDataFrame(
         fightID = fightData["id"]
 
         phaseTransitions: List[PhaseTransition] = []
-        if len(phaseAbilities) == 0 and ignorePhaseTransitions == False:
-            rawPhaseTransitions = fightData.get("phaseTransitions")
-            if not rawPhaseTransitions:
-                phaseTransitions = [PhaseTransition(id=1, startTime=fightData["startTime"])]
-            else:
-                for normalizedPhaseNumber, phase in enumerate(
-                    sorted(rawPhaseTransitions, key=lambda pt: pt["startTime"]), start=1
-                ):
-                    phaseTransitions.append(PhaseTransition(id=normalizedPhaseNumber, startTime=phase["startTime"]))
-
         if difficulty == DifficultyType.Dungeon:
             filePaths = []
             dungeonPulls = fightData["dungeonPulls"]
             for pullID, pull in enumerate(dungeonPulls, start=1):
                 if pull.get("encounterID") == encounterID:
+                    eventsFilePath = getEventsFilePathForDungeon(
+                        zoneID, dungeonEncounterID, encounterID, fightCode, fightID, pullID
+                    )
+                    phaseTransitions: List[PhaseTransition] = [PhaseTransition(id=1, startTime=pull["startTime"])]
                     appendFightEvent(
                         eventsFilePath, allFightEvents, phaseTransitions, fightCode, fightID, pullID, phaseAbilities
                     )
         else:
-            phaseTransitions: List[PhaseTransition] = [PhaseTransition(id=1, startTime=fightData["startTime"])]
+            if len(phaseAbilities) == 0 and ignorePhaseTransitions == False:
+                rawPhaseTransitions = fightData.get("phaseTransitions")
+                if not rawPhaseTransitions:
+                    phaseTransitions = [PhaseTransition(id=1, startTime=fightData["startTime"])]
+                else:
+                    for normalizedPhaseNumber, phase in enumerate(
+                        sorted(rawPhaseTransitions, key=lambda pt: pt["startTime"]), start=1
+                    ):
+                        phaseTransitions.append(PhaseTransition(id=normalizedPhaseNumber, startTime=phase["startTime"]))
+            else:
+                phaseTransitions: List[PhaseTransition] = [PhaseTransition(id=1, startTime=fightData["startTime"])]
             eventsFilePath = getEventsFilePath(zoneID, difficulty, encounterID, fightCode, fightID)
             appendFightEvent(eventsFilePath, allFightEvents, phaseTransitions, fightCode, fightID, -1, phaseAbilities)
 

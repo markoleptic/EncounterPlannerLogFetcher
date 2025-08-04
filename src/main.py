@@ -7,6 +7,7 @@ from src.fetchReports import (
     fetchAndSaveFightsForDungeon,
     fetchAndSaveReports,
     fetchFightsFromReport,
+    fetchAndSaveFightsAsync,
 )
 from src.enums import DifficultyType, KillType
 from src.processEvents import PhaseAbilityTransition, createEncounterDataFrame, printPhaseTimeStatistics
@@ -32,13 +33,13 @@ def fetchAndSaveFightsAndEventsForManaforgeOmegaMythic():
 
 
 def fetchAndSaveFightsAndEventsForManaforgeOmegaHeroic():
-    fetchAndSaveFights(44, 3129, DifficultyType.Heroic, KillType.Encounters)
-    fetchAndSaveFights(44, 3131, DifficultyType.Heroic, KillType.Encounters)
-    fetchAndSaveFights(44, 3130, DifficultyType.Heroic, KillType.Encounters)
-    fetchAndSaveFights(44, 3132, DifficultyType.Heroic, KillType.Encounters)
-    fetchAndSaveFights(44, 3122, DifficultyType.Heroic, KillType.Encounters)
-    fetchAndSaveFights(44, 3133, DifficultyType.Heroic, KillType.Encounters)
-    fetchAndSaveFights(44, 3134, DifficultyType.Heroic, KillType.Encounters)
+    fetchAndSaveFightsAsync(44, 3129, DifficultyType.Heroic, KillType.Kills)
+    fetchAndSaveFightsAsync(44, 3131, DifficultyType.Heroic, KillType.Kills)
+    fetchAndSaveFightsAsync(44, 3130, DifficultyType.Heroic, KillType.Kills)
+    fetchAndSaveFightsAsync(44, 3132, DifficultyType.Heroic, KillType.Kills)
+    fetchAndSaveFightsAsync(44, 3122, DifficultyType.Heroic, KillType.Kills)
+    fetchAndSaveFightsAsync(44, 3133, DifficultyType.Heroic, KillType.Kills)
+    fetchAndSaveFightsAsync(44, 3134, DifficultyType.Heroic, KillType.Encounters)
 
     fetchAndSaveEvents(44, 3129, DifficultyType.Heroic)
     fetchAndSaveEvents(44, 3131, DifficultyType.Heroic)
@@ -95,6 +96,24 @@ def fetchAndSaveFightsAndEventsForSeason3Dungeons():
     fetchAndSaveEventsForDungeon(45, 2442, 112442)
 
 
+def getZophexDf():
+    return createEncounterDataFrame(
+        45,
+        2425,
+        DifficultyType.Dungeon,
+        112441,
+        [],
+        [
+            PhaseAbilityTransition(346204, "cast", 0),
+            PhaseAbilityTransition(346204, "cast", 1),
+            PhaseAbilityTransition(346204, "cast", 2),
+            PhaseAbilityTransition(346204, "cast", 3),
+            PhaseAbilityTransition(346204, "cast", 4),
+            PhaseAbilityTransition(346204, "cast", 5),
+        ],
+    )
+
+
 def getSoazmiDf():
     return createEncounterDataFrame(
         45,
@@ -119,7 +138,16 @@ def getGrandMenagerieDf():
 
 def getMyzasOasisDf():
     return createEncounterDataFrame(
-        45, 2440, DifficultyType.Dungeon, 112441, [], [PhaseAbilityTransition(181089, "cast", 0)]
+        45,
+        2440,
+        DifficultyType.Dungeon,
+        112441,
+        [],
+        [
+            PhaseAbilityTransition(181089, "cast", 0),
+            PhaseAbilityTransition(1241023, "removebuff", 0),
+            PhaseAbilityTransition(1241023, "removebuff", 1),
+        ],
     )
 
 
@@ -167,11 +195,47 @@ def getAraKaraDf():
     )
 
 
-def getForgeweaverArazDf():
+def getPlexusSentinelDf(difficultyType: DifficultyType):
+    return createEncounterDataFrame(
+        44,
+        3129,
+        difficultyType,
+        0,
+        [],
+        [
+            # Comment every other phase transition to get phase durations
+            PhaseAbilityTransition(1220618, "applybuff", 0),
+            PhaseAbilityTransition(1220618, "removebuff", 0),
+            PhaseAbilityTransition(1220981, "applybuff", 0),
+            PhaseAbilityTransition(1220981, "removebuff", 0),
+            PhaseAbilityTransition(1220982, "applybuff", 0),
+            PhaseAbilityTransition(1220982, "removebuff", 0),
+        ],
+    )
+
+
+def getLoomitharDf(difficultyType: DifficultyType):
+    return createEncounterDataFrame(
+        44,
+        3131,
+        difficultyType,
+        0,
+        [],
+        [
+            PhaseAbilityTransition(1228070, "applybuff", 0),
+        ],
+    )
+
+
+def getSoulbinderNaazindhriDf(difficultyType: DifficultyType):
+    return createEncounterDataFrame(44, 3130, difficultyType)
+
+
+def getForgeweaverArazDf(difficultyType: DifficultyType):
     return createEncounterDataFrame(
         44,
         3132,
-        DifficultyType.Mythic,
+        difficultyType,
         0,
         [],
         [
@@ -183,29 +247,50 @@ def getForgeweaverArazDf():
     )
 
 
-def getSoulHuntersDf():
-    return createEncounterDataFrame(
-        44,
-        3122,
-        DifficultyType.Mythic,
-        0,
-        [],
-        [
-            PhaseAbilityTransition(1233093, "applybuff", 0),
-            PhaseAbilityTransition(1245978, "removebuff", 1),
-            PhaseAbilityTransition(1233863, "applybuff", 0),
-            PhaseAbilityTransition(1245978, "removebuff", 3),
-            PhaseAbilityTransition(1233672, "cast", 0),
-            PhaseAbilityTransition(1227117, "removebuff", 2),
-        ],
-    )
+def getSoulHuntersDf(difficultyType: DifficultyType):
+    if difficultyType == DifficultyType.Heroic:
+        return createEncounterDataFrame(
+            44,
+            3122,
+            difficultyType,
+            0,
+            [],
+            [
+                PhaseAbilityTransition(1242133, "applybuff", 0),
+                PhaseAbilityTransition(1242133, "removebuff", 0),
+                PhaseAbilityTransition(1242133, "applybuff", 2),
+                PhaseAbilityTransition(1242133, "removebuff", 2),
+                PhaseAbilityTransition(1242133, "applybuff", 4),
+                PhaseAbilityTransition(1242133, "removebuff", 4),
+            ],
+        )
+    else:
+        return createEncounterDataFrame(
+            44,
+            3122,
+            difficultyType,
+            0,
+            [],
+            [
+                PhaseAbilityTransition(1233093, "applybuff", 0),
+                PhaseAbilityTransition(1245978, "removebuff", 1),
+                PhaseAbilityTransition(1233863, "applybuff", 0),
+                PhaseAbilityTransition(1245978, "removebuff", 3),
+                PhaseAbilityTransition(1233672, "cast", 0),
+                PhaseAbilityTransition(1227117, "removebuff", 2),
+            ],
+        )
 
 
-def getNexusKingSalhadaarDf():
+def getFractillusDf(difficultyType: DifficultyType):
+    return createEncounterDataFrame(44, 3133, difficultyType)
+
+
+def getNexusKingSalhadaarDf(difficultyType: DifficultyType):
     return createEncounterDataFrame(
         44,
         3134,
-        DifficultyType.Mythic,
+        difficultyType,
         0,
         [],
         [
@@ -218,4 +303,4 @@ def getNexusKingSalhadaarDf():
 
 
 if __name__ == "__main__":
-    printPhaseTimeStatistics(getSoazmiDf(), False, False, True)
+    printPhaseTimeStatistics(getNexusKingSalhadaarDf(DifficultyType.Heroic), False, False, True)

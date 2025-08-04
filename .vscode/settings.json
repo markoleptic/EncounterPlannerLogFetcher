@@ -10,9 +10,12 @@
 		"errorbar",
 		"floatfmt",
 		"Forgeweaver",
+		"Fractillus",
 		"hylbrande",
+		"Loomithar",
 		"Manaforge",
 		"myzas",
+		"Naazindhri",
 		"ndarray",
 		"removebuff",
 		"Salhadaar",
@@ -20,12 +23,14 @@
 		"showindex",
 		"soazmi",
 		"soleah",
+		"Soulbinder",
 		"tablefmt",
 		"venv",
 		"Voidwing",
 		"xerr",
 		"xlabel",
-		"ylabel"
+		"ylabel",
+		"Zophex"
 	],
 	"cSpell.ignorePaths": [
 		"events",
