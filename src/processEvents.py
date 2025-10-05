@@ -176,6 +176,7 @@ def createEncounterDataFrame(
     dropAbilities: List[int] = [],
     phaseAbilities: List[PhaseAbilityTransition] = [],
     ignorePhaseTransitions: bool = False,
+    minPercentage: float = 100.0,
 ) -> pd.DataFrame:
     """Creates a Pandas DataFrame for the given encounter using all events matching the specified criteria.
 
@@ -214,6 +215,11 @@ def createEncounterDataFrame(
         startTime = fightData.get("startTime")
         if startTime == None:
             continue
+
+        percentage = fightData.get("fightPercentage")
+        if percentage:
+            if percentage > minPercentage:
+                continue
 
         fightCode = fightData["code"]
         fightID = fightData["id"]
@@ -262,35 +268,28 @@ def createEncounterDataFrame(
     return cleaned
 
 
-def aggregatePhaseTimeStatistics(dataFrame: pd.DataFrame) -> pd.DataFrame:
+def aggregatePhaseTimeStatistics(dataFrame: pd.DataFrame, minCount: int = 0) -> pd.DataFrame:
     """Computes the count, mean, standard deviation, minimum, and maximum phaseTime values for a DataFrame describing
     an encounter.
 
     Args:
         dataFrame (pd.DataFrame): DataFrame returned by `createEncounterDataFrame`.
+        minCount (int, optional): Throw out aggregated statistics where the count is less than this value.
 
     Returns:
         pd.DataFrame: A new DataFrame grouped by `abilityID`, `phase`, `type`, `castIndex`, aggregated across
         `phaseTime`.
     """
+    grouped = dataFrame.groupby(["abilityID", "phase", "type", "castIndex"])
+    filtered = grouped.filter(lambda g: len(g) >= minCount)
 
     phaseTimeStatistics = (
-        dataFrame.groupby(["abilityID", "phase", "type", "castIndex"])["phaseTime"]
+        filtered.groupby(["abilityID", "phase", "type", "castIndex"])["phaseTime"]
         .agg(count="count", mean="mean", std="std", min="min", max="max")
         .fillna(0)
         .reset_index()
     )
     return phaseTimeStatistics
-
-
-def fmt_row(label: str, values: list, width: int = 7, precision: int = 2) -> str:
-    def fmt(val):
-        if isinstance(val, float):
-            return f"{val:{width}.{precision}f}"
-        else:
-            return f"{val:{width}d}"
-
-    return f"  {label:<18}" + ", ".join(fmt(v) for v in values)
 
 
 def printPhaseTimeStatistics(
@@ -329,18 +328,13 @@ def printPhaseTimeStatistics(
                             print(
                                 f"      Cast #{int(row['castIndex'])}: "
                                 f"count={int(row['count'])}, "
-                                f"avg={row['mean']:.2f}, "
-                                f"std_dev={row['std']:.2f}, "
-                                f"cv={row['std']/row['mean']:.2f}, "
-                                f"min={row['min']:.2f}, "
-                                f"max={row['max']:.2f}, "
-                                f"max={row['max']:.2f}"
+                                f"avg={row['mean']:.1f}, "
+                                f"std_dev={row['std']:.1f}, "
+                                f"cv={row['std']/row['mean']:.1f}, "
+                                f"min={row['min']:.1f}, "
+                                f"max={row['max']:.1f}, "
+                                f"max={row['max']:.1f}"
                             )
-                # if printAverageCastTimes:
-                #     meanCastTimes = typeGroup.sort_values("castIndex")["mean"].to_numpy()
-                #     relativeTimes = np.insert(np.diff(meanCastTimes), 0, meanCastTimes[0])
-                #     formatted = ", ".join(f"{v:.2f}" for v in relativeTimes)
-                #     print(f"      Average Cast Times: {formatted}")
 
     if printAverageCastTimes:
         with open(getTempPath() / "AverageCastTimes.txt", "w") as averageCastTimesFile:
@@ -360,7 +354,7 @@ def printPhaseTimeStatistics(
                         df.reset_index(drop=True, inplace=True)
                         averageCastTimesFile.write(f"\n| Ability {abilityID} - Phase {phase} - Type {cast_type} |\n")
                         data = [[row_name] + list(row) for row_name, row in df.T.iterrows()]
-                        table_str = tabulate(data, tablefmt="github", showindex=False, floatfmt=".2f")
+                        table_str = tabulate(data, tablefmt="github", showindex=False, floatfmt=".1f")
                         lines = table_str.splitlines()
 
                         # Replace Average Cast Time '|' with ","

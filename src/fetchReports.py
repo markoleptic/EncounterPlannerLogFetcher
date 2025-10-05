@@ -664,7 +664,7 @@ def fetchEvents(
         Dict[str, Any]: Found events.
     """
     if useFilter:
-        filterExpression = 'ability.id != 1 AND (source.rawDisposition = "enemy" OR ability.id = 181089) AND (type = "begincast" OR type = "cast" OR type = "applybuff" OR type = "removebuff")'
+        filterExpression = 'ability.id != 1 AND (source.rawDisposition = "enemy" OR ability.id = 181089 OR ability.id = 1247045 OR ability.id = 1226311) AND (type = "begincast" OR type = "cast" OR type = "applybuff" OR type = "removebuff" OR type = "applydebuff")'
         dataType = "All"
     else:
         filterExpression = ""

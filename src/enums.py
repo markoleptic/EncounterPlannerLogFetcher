@@ -8,5 +8,6 @@ class KillType(StrEnum):
 
 class DifficultyType(IntEnum):
     Dungeon = 0
+    Normal = 3
     Heroic = 4
     Mythic = 5

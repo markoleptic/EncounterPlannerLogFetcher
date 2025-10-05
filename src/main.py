@@ -256,13 +256,14 @@ def getSoulHuntersDf(difficultyType: DifficultyType):
             0,
             [],
             [
-                PhaseAbilityTransition(1242133, "applybuff", 0),
-                PhaseAbilityTransition(1242133, "removebuff", 0),
-                PhaseAbilityTransition(1242133, "applybuff", 2),
-                PhaseAbilityTransition(1242133, "removebuff", 2),
-                PhaseAbilityTransition(1242133, "applybuff", 4),
-                PhaseAbilityTransition(1242133, "removebuff", 4),
+                PhaseAbilityTransition(1242133, "applybuff", 1),
+                PhaseAbilityTransition(1242133, "removebuff", 1),
+                PhaseAbilityTransition(1242133, "applybuff", 3),
+                PhaseAbilityTransition(1242133, "removebuff", 3),
+                PhaseAbilityTransition(1242133, "applybuff", 5),
+                PhaseAbilityTransition(1242133, "removebuff", 5),
             ],
+            True,
         )
     else:
         return createEncounterDataFrame(
@@ -272,13 +273,14 @@ def getSoulHuntersDf(difficultyType: DifficultyType):
             0,
             [],
             [
-                PhaseAbilityTransition(1233093, "applybuff", 0),
+                PhaseAbilityTransition(1245978, "applybuff", 1),
                 PhaseAbilityTransition(1245978, "removebuff", 1),
-                PhaseAbilityTransition(1233863, "applybuff", 0),
+                PhaseAbilityTransition(1245978, "applybuff", 3),
                 PhaseAbilityTransition(1245978, "removebuff", 3),
-                PhaseAbilityTransition(1233672, "cast", 0),
-                PhaseAbilityTransition(1227117, "removebuff", 2),
+                PhaseAbilityTransition(1245978, "applybuff", 5),
+                PhaseAbilityTransition(1245978, "removebuff", 5),
             ],
+            True,
         )
 
 
@@ -302,5 +304,26 @@ def getNexusKingSalhadaarDf(difficultyType: DifficultyType):
     )
 
 
+def getDimDf(difficultyType: DifficultyType):
+    return createEncounterDataFrame(
+        44,
+        3135,
+        difficultyType,
+        0,
+        [],
+        [
+            PhaseAbilityTransition(1234898, "cast", 0),  # Event Horizon
+            PhaseAbilityTransition(1237689, "removebuff", 0),  # Void Shell
+            PhaseAbilityTransition(1237689, "removebuff", 1),  # Void Shell
+            PhaseAbilityTransition(1245292, "applydebuff", 0),  # Destabilized
+        ],
+        True,
+        30,
+    )
+
+
 if __name__ == "__main__":
-    printPhaseTimeStatistics(getNexusKingSalhadaarDf(DifficultyType.Heroic), False, False, True)
+    # fetchAndSaveReports(44, 100, 20)
+    # fetchAndSaveFights(44, 3122, DifficultyType.Heroic, KillType.Kills, True, 200)
+    # fetchAndSaveEvents(44, 3122, DifficultyType.Heroic, True)
+    printPhaseTimeStatistics(getSoulHuntersDf(DifficultyType.Heroic), False, False, True)
