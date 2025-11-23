@@ -13,6 +13,17 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def createDirectoriesIfNecessary():
+    if not os.path.isdir(getReportsPath()):
+        os.mkdir(getReportsPath())
+    if not os.path.isdir(getFightsPath()):
+        os.mkdir(getFightsPath())
+    if not os.path.isdir(getTempPath()):
+        os.mkdir(getTempPath())
+    if not os.path.isdir(PROJECT_ROOT / "events"):
+        os.mkdir(PROJECT_ROOT / "events")
+
+
 def getProjectRoot() -> Path:
     return PROJECT_ROOT
 
@@ -22,6 +33,15 @@ def getEventsPath(zoneID: int, difficulty: DifficultyType, encounterID: int) -> 
 
 
 def getEventsFilePath(zoneID: int, difficulty: DifficultyType, encounterID: int, code: str, fightID: int) -> Path:
+    zoneIdDirectory = PROJECT_ROOT / "events" / str(zoneID)
+    if not os.path.isdir(zoneIdDirectory):
+        os.mkdir(zoneIdDirectory)
+    difficultyDirectory = zoneIdDirectory / str(difficulty)
+    if not os.path.isdir(difficultyDirectory):
+        os.mkdir(difficultyDirectory)
+    encounterIdDirectory = difficultyDirectory / str(encounterID)
+    if not os.path.isdir(encounterIdDirectory):
+        os.mkdir(encounterIdDirectory)
     return getEventsPath(zoneID, difficulty, encounterID) / f"{zoneID}_{encounterID}_{difficulty}_{code}_{fightID}.json"
 
 

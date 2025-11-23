@@ -199,15 +199,13 @@ def createEncounterDataFrame(
         fightsFilePath = getFightsFilePath(zoneID, difficulty, encounterID)
 
     if not fightsFilePath.exists():
-        print(f"{zoneID}_{encounterID}_{difficulty}.json does not exist")
-        return pd.DataFrame()
+        raise FileNotFoundError(f"The fights file path {zoneID}_{encounterID}_{difficulty}.json does not exist")
 
     with open(fightsFilePath) as fightsFile:
         fights = json.load(fightsFile)
 
     if not fights:
-        print("No fights found")
-        return pd.DataFrame()
+        raise LookupError(f"The fights file {zoneID}_{encounterID}_{difficulty}.json has not fights")
 
     allFightEvents: List[Event] = []
 

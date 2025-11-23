@@ -288,8 +288,7 @@ def fetchAndSaveFightsAsync(
     if reportsFilePath is None:
         reportsFilePath = getReportsFilePath(zoneID)
     if not reportsFilePath.exists():
-        print(f"No reports file for zoneID: {zoneID}")
-        return
+        raise FileNotFoundError(f"No reports file for zoneID: {zoneID}")
 
     with open(reportsFilePath) as f:
         codes: List[str] = json.load(f)["codes"]
@@ -506,8 +505,7 @@ def fetchAndSaveFights(
     if reportsFilePath == None:
         reportsFilePath = getReportsFilePath(zoneID)
     if not reportsFilePath.exists():
-        print(f"No reports file for zoneID: {zoneID}")
-        return
+        raise FileNotFoundError(f"No reports file for zoneID: {zoneID}")
 
     with open(reportsFilePath) as reportsFile:
         reports = json.load(reportsFile)
@@ -588,8 +586,7 @@ def fetchAndSaveFightsForDungeon(
     if reportsFilePath == None:
         reportsFilePath = getReportsFilePath(zoneID)
     if not reportsFilePath.exists():
-        print(f"No reports file for zoneID: {zoneID}")
-        return
+        raise FileNotFoundError(f"No reports file for zoneID: {zoneID}")
 
     with open(reportsFilePath) as reportsFile:
         reports = json.load(reportsFile)

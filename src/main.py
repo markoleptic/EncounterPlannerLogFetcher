@@ -11,7 +11,7 @@ from src.fetchReports import (
 )
 from src.enums import DifficultyType, KillType
 from src.processEvents import PhaseAbilityTransition, createEncounterDataFrame, printPhaseTimeStatistics
-from src.utility import getReportsPath
+from src.utility import createDirectoriesIfNecessary, getReportsPath
 
 
 def fetchAndSaveFightsAndEventsForManaforgeOmegaMythic():
@@ -323,7 +323,8 @@ def getDimDf(difficultyType: DifficultyType):
 
 
 if __name__ == "__main__":
-    # fetchAndSaveReports(44, 100, 20)
-    # fetchAndSaveFights(44, 3122, DifficultyType.Heroic, KillType.Kills, True, 200)
-    # fetchAndSaveEvents(44, 3122, DifficultyType.Heroic, True)
-    printPhaseTimeStatistics(getSoulHuntersDf(DifficultyType.Heroic), False, False, True)
+    createDirectoriesIfNecessary()
+    #fetchAndSaveReports(44, 100, 20)
+    #fetchAndSaveFights(44, 3134, DifficultyType.Mythic, KillType.Kills, True, 1)
+    fetchAndSaveEvents(44, 3134, DifficultyType.Mythic, True)
+    # printPhaseTimeStatistics(getSoulHuntersDf(DifficultyType.Heroic), False, False, True)
