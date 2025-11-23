@@ -19,6 +19,13 @@ CLIENT_SECRET={client secret from WarcraftLogs}
 
 `fetchAndSaveReports(44, 100, 20)` fetches most recent reports from zone 44 (Manaforge Omega), 100 reports per page, 20 pages.
 
+`fetchAndSaveFights(44, 3134, DifficultyType.Mythic, KillType.Kills, True, 1)` uses the reports file to find fights for Nexus-King Salhadaar that are mythic difficulty, only kills (no wipes), overrides existing fights files, and limits
+the number of found fights to one.
+The fights are saved to `fights/{zoneID}_{encounterID}_{difficulty}.json`.
+
+`fetchAndSaveEvents(44, 3134, DifficultyType.Mythic, True)` uses the fights file to fetch all events from the fights.
+The events for each fight are saved to `events/{zoneID}/{difficulty}/{encounterID}/{zoneID}_{encounterID}_{difficulty}.json`.
+
 ## Print a list of report IDs from Warcraft Logs
 
 ```
