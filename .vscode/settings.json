@@ -1,9 +1,11 @@
 {
 	"cSpell.words": [
 		"applybuff",
+		"applydebuff",
 		"Araz",
 		"begincast",
 		"cumcount",
+		"ddof",
 		"dotenv",
 		"ecolor",
 		"elinewidth",
