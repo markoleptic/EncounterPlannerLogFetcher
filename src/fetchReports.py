@@ -161,15 +161,19 @@ def makeClient(accessToken: str, asyncTransport: bool) -> Client:
 
 def updatePointsResetTime(accessToken: str):
     global nextPointsResetTime
-    client = makeClient(accessToken, False)
-    rateLimitResponse = client.execute(gql(rateLimitQuery))
-    rateLimitData = rateLimitResponse.get("rateLimitData")
     secondsUntilPointsReset = 3600
-    if rateLimitData:
-        secondsUntilPointsReset = rateLimitData.get("pointsResetIn")
+    try:
+        client = makeClient(accessToken, False)
+        rateLimitResponse = client.execute(gql(rateLimitQuery))
+        rateLimitData = rateLimitResponse.get("rateLimitData")
+        if rateLimitData:
+            secondsUntilPointsReset = rateLimitData.get("pointsResetIn", 3600)
+    except Exception:
+        secondsUntilPointsReset = 3600  # Fallback in case of error
+
     nextPointsResetTime = time.time() + secondsUntilPointsReset
     print(f"Updated next points reset time: {nextPointsResetTime}")
-    print(time.time())
+    print(f"Current Time: {time.time()}")
 
 
 updatePointsResetTime(getAccessToken())
@@ -179,7 +183,7 @@ def sleepUntilPointsReset(
     transportServerError: TransportServerError, accessToken: str, callback: Callable[[], Any]
 ) -> Any:
     if transportServerError.code == 429:
-        delay = max(0, nextPointsResetTime - time.time())
+        delay = max(1, (nextPointsResetTime + 1) - time.time())
         print(f"Sleeping for {delay:.2f} seconds due to rate limit...")
         time.sleep(delay)
         updatePointsResetTime(accessToken)
@@ -221,8 +225,10 @@ def executeQueryWithRetry(accessToken: str, query: str, variables: Dict[str, Any
     try:
         return client.execute(gql(query), variables)
     except TransportServerError as e:
-        if not sleepUntilPointsReset(e, accessToken, partial(executeQueryWithRetry, accessToken, query, variables)):
+        result = sleepUntilPointsReset(e, accessToken, partial(executeQueryWithRetry, accessToken, query, variables))
+        if result is None:
             raise
+        return result
 
 
 async def executeQueryWithRetryAsync(accessToken: str, client: Client, query: str, variables: Dict[str, Any]) -> Any:
@@ -327,7 +333,7 @@ def fetchAndSaveFightsAsync(
 
 
 def fetchReports(
-    accessToken: str, page: int, zoneID: int, reportLimit: int = 0, startTime: float = 0.0
+    accessToken: str, page: int, zoneID: int, reportLimit: int = 0, startTime: float = 0.0, endTime: float = 0.0
 ) -> Dict[str, Any]:
     """Fetches a page of reports.
 
@@ -341,7 +347,7 @@ def fetchReports(
     Returns:
         Dict[str, Any]: Found reports.
     """
-    variables = {"page": page, "zoneID": zoneID, "reportLimit": reportLimit, "startTime": startTime}
+    variables = {"page": page, "zoneID": zoneID, "reportLimit": reportLimit, "startTime": startTime, "endTime": endTime}
     return executeQueryWithRetry(accessToken, fetchReportsQuery, variables)
 
 
@@ -350,6 +356,7 @@ def fetchAndSaveReports(
     reportLimit: int = 100,
     maxPages: int = 10,
     startTime: float = -1.0,
+    endTime: float = -1.0,
     reportsFilePath: Path | None = None,
 ):
     """Fetches reports codes and saves them to file. If a matching reports file exists, it will be loaded so that
@@ -382,12 +389,16 @@ def fetchAndSaveReports(
                     startTime = lastData.get("startTime", 0.0)
                     print(f"Using last saved start time: {startTime}")
 
+    if startTime == -1.0:
+        startTime = 0.0
+    if endTime == -1.0:
+        endTime = 0.0
     maxStartTime = startTime
 
     while page <= maxPages:
         try:
             print(f"Fetching page {page}...")
-            result = fetchReports(token, page, zoneID, reportLimit, startTime)
+            result = fetchReports(token, page, zoneID, reportLimit, startTime, endTime)
 
             reportData = result["reportData"]
             reports = reportData["reports"]["data"]
@@ -734,6 +745,8 @@ def fetchAndSaveEvents(
                 continue
 
         if len(eventsData) > 0:
+            path = eventsFilePath.parent
+            path.mkdir(parents=True, exist_ok=True)
             with open(eventsFilePath, "w") as eventsFile:
                 json.dump({"startTime": fightStartTime, "events": eventsData}, eventsFile, indent=2)
 
@@ -799,6 +812,8 @@ def fetchAndSaveEventsForDungeon(
                         return
 
                 if len(eventsData) > 0:
+                    path = eventsFilePath.parent
+                    path.mkdir(parents=True, exist_ok=True)
                     with open(eventsFilePath, "w") as eventsFile:
                         json.dump(
                             {"startTime": startTime, "endTime": endTime, "pullID": pullID, "events": eventsData},
