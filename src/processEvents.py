@@ -10,6 +10,7 @@ from pathlib import Path
 from tabulate import tabulate
 from typing import List, Dict, Any, Optional, Tuple
 
+# from scipy.signal import find_peaks
 from src.enums import DifficultyType
 from src.utility import getEventsFilePath, getEventsFilePathForDungeon, getFightsFilePath, getTempPath
 
@@ -175,7 +176,7 @@ def createEncounterDataFrame(
     dungeonEncounterID: int = 0,
     dropAbilities: List[int] = [],
     phaseAbilities: List[PhaseAbilityTransition] = [],
-    ignorePhaseTransitions: bool = False,
+    ignorePhaseTransitions: bool = True,
     minPercentage: float = 100.0,
 ) -> pd.DataFrame:
     """Creates a Pandas DataFrame for the given encounter using all events matching the specified criteria.
@@ -266,6 +267,59 @@ def createEncounterDataFrame(
     return cleaned
 
 
+def createEncounterDataFrameNoFightsFile(
+    zoneID: int,
+    encounterID: int,
+    difficulty: DifficultyType,
+    fightID: int,
+    code: str,
+    dungeonEncounterID: int = 0,
+    dropAbilities: List[int] = [],
+    phaseAbilities: List[PhaseAbilityTransition] = [],
+    ignorePhaseTransitions: bool = True,
+    minPercentage: float = 100.0,
+) -> pd.DataFrame:
+    """Creates a Pandas DataFrame for the given encounter using all events matching the specified criteria.
+
+    Args:
+        zoneID (int): ZoneID used when fetching data.
+        encounterID (int): Encounter ID of the boss encounter.
+        difficulty (DifficultyType): Difficulty used when fetching data.
+        dungeonEncounterID (int, optional): Encounter ID of the dungeon, if querying a dungeon boss.
+        dropAbilities (List[int], optional): Ability IDs to drop from the data frame.
+        phaseAbilities (List[PhaseAbilityTransition], optional): Replace phase transitions with transitions created at
+        each ability entry.
+        ignorePhaseTransitions (bool, optional): Whether to ignore phase transitions from WarcraftLogs API fights.
+    Returns:
+        pd.DataFrame: Empty if the fights file doesn't exist or if no fights were found.
+    """
+
+    allFightEvents: List[Event] = []
+
+    eventsFilePath = getEventsFilePath(zoneID, difficulty, encounterID, code, fightID)
+    startTime = 0
+    with open(eventsFilePath) as eventsFile:
+        events = json.load(eventsFile)
+        startTime = events["startTime"]
+    phaseTransitions: List[PhaseTransition] = [PhaseTransition(id=1, startTime=startTime)]
+    appendFightEvent(eventsFilePath, allFightEvents, phaseTransitions, code, fightID, -1, phaseAbilities)
+
+    df = pd.DataFrame(allFightEvents)
+
+    if df.empty:
+        print("Empty dataframe")
+        return df
+
+    df.drop(df[df["abilityID"] == 145629].index, inplace=True)  # AMZ...
+
+    cleaned = df.sort_values(["fightCode", "fightID", "pullID", "abilityID", "phase", "type", "phaseTime"])
+    cleaned["castIndex"] = (
+        cleaned.groupby(["fightCode", "fightID", "pullID", "abilityID", "phase", "type"]).cumcount() + 1
+    )
+
+    return cleaned
+
+
 def aggregatePhaseTimeStatistics(dataFrame: pd.DataFrame, minCount: int = 0) -> pd.DataFrame:
     """Computes the count, mean, standard deviation, minimum, and maximum phaseTime values for a DataFrame describing
     an encounter.
@@ -280,6 +334,27 @@ def aggregatePhaseTimeStatistics(dataFrame: pd.DataFrame, minCount: int = 0) -> 
     """
     grouped = dataFrame.groupby(["abilityID", "phase", "type", "castIndex"])
     filtered = grouped.filter(lambda g: len(g) >= minCount)
+
+    # This can be used to remove outliers, but 99% of the time isn't necessary
+    # subset = dataFrame[dataFrame["abilityID"] == 1248449]
+    # subset = subset[subset["type"] == "cast"]
+    # result = subset.sort_values(["castIndex", "phaseTime"])[["pullID", "castIndex", "phaseTime"]]
+    # with open(getTempPath() / "TempAbilityDump.txt", "w") as f:
+    #     f.write(result.to_string())
+    # times = np.sort(subset["phaseTime"].to_numpy())
+    # hist, bin_edges = np.histogram(times, bins=100)
+    # peaks, _ = find_peaks(hist, prominence=4)
+    # centers = bin_edges[peaks]
+    # print(centers)
+    # keys = ["abilityID", "phase", "type", "castIndex"]
+    # filtered = dataFrame.groupby(keys).filter(lambda g: len(g) >= minCount)
+    # g = filtered.groupby(keys)
+    # median = g["phaseTime"].transform("median")
+    # filtered["_abs_dev"] = (filtered["phaseTime"] - median).abs()
+    # mad = filtered.groupby(keys)["_abs_dev"].transform("median")
+    # robust_std = mad * 1.4826
+    # filtered = filtered[filtered["_abs_dev"] <= 7 * robust_std]
+    # filtered = filtered.drop(columns="_abs_dev")
 
     phaseTimeStatistics = (
         filtered.groupby(["abilityID", "phase", "type", "castIndex"])["phaseTime"]
